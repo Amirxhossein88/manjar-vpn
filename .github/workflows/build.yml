@@ -35,7 +35,7 @@ jobs:
 
       - name: Build exe with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed --clean --name ManjarVPN --add-binary "xray.exe;." --collect-all customtkinter main.py
+          pyinstaller --noconfirm --onefile --windowed --clean --name ManjarVPN --icon logo.ico --add-binary "xray.exe;." --add-data "logo.png;." --collect-all customtkinter main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

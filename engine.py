@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine
-================
-موتور برنامه: دریافت کانفیگ‌های رایگان از منابع معتبر (جمع‌آوری‌شده از کانال‌های تلگرام)،
-پارس و حذف تکراری‌ها، تست پینگ + تست سرعت واقعی با هسته Xray، انتخاب بهترین کانفیگ
-و اتصال به آن + روشن/خاموش کردن پروکسی سیستم ویندوز.
+ManjarVPN Engine v1.1
+=====================
+موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۱۷ منبع، پیش‌فیلتر TCP،
+تست پینگ + تست سرعت واقعی با هسته Xray، حافظه‌ی سرورهای خوب قبلی
+(اتصال مجدد در چند ثانیه)، انتخاب بهترین کانفیگ و اتصال + پروکسی سیستم ویندوز.
 """
 from __future__ import annotations
 
@@ -29,20 +29,27 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # ============================ تنظیمات قابل تغییر ============================
-# چند کانفیگ به‌طور تصادفی از کل لیست تست شود (بیشتر = تست کامل‌تر ولی کندتر)
-MAX_TEST_NODES = 400
-# چند تست همزمان اجرا شود (هر تست یک پروسه Xray جداگانه باز می‌کند)
-CONCURRENT_TESTS = 30
-# چند کانفیگِ پینگِ پایین‌تر، تست سرعت واقعی شوند
-TOP_SPEED_TESTS = 12
-CONCURRENT_SPEED_TESTS = 4
-LATENCY_TIMEOUT = 6          # ثانیه
-SPEED_TIMEOUT = 10           # ثانیه
-SPEED_MAX_BYTES = 10_000_000 # حداکثر ۱۰ مگابایت دانلود برای هر تست سرعت
-MIN_GOOD_SPEED_MBPS = 0.3    # حداقل سرعت قابل قبول برای انتخاب به‌عنوان بهترین
+MAX_TEST_NODES = 600          # حداکثر کانفیگ برای پیش‌فیلتر TCP
+TCP_PREFILTER_WORKERS = 200   # اتصال‌های همزمان TCP (خیلی سبک است)
+TCP_PREFILTER_TIMEOUT = 1.5   # ثانیه
+MAX_XRAY_LATENCY_TESTS = 320  # بعد از پیش‌فیلتر، حداکثر تست پینگ واقعی
+CONCURRENT_TESTS = 48         # تست‌های پینگ همزمان
+TOP_SPEED_TESTS = 8           # بهترین‌های پینگ برای تست سرعت
+EXTRA_SPEED_SAMPLES = 3       # + چند نمونه تصادفی سالم برای تنوع
+CONCURRENT_SPEED_TESTS = 6
+LATENCY_TIMEOUT = 5
+SPEED_TIMEOUT = 7
+SPEED_MAX_BYTES = 6_000_000
+GOOD_SPEED_EARLY = 12.0       # Mbps — اگر برسد دیگر لازم نیست صبر کامل کنیم
+MIN_GOOD_SPEED_MBPS = 0.3
+
+# حافظه‌ی سرورهای خوب (اتصال سریع در اجراهای بعدی)
+CACHE_MAX = 20
+CACHE_TTL_DAYS = 7
+QUICK_MIN_SPEED_MBPS = 2.0
 
 XRAY_SOCKS_PORT = 10808
 XRAY_HTTP_PORT = 10809
@@ -50,22 +57,27 @@ XRAY_HTTP_PORT = 10809
 UA = {"User-Agent": f"{APP_NAME}/{VERSION}"}
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# ============================ منابع کانفیگ (آپدیت خودکار) ============================
-# این مخازن، کانفیگ‌های کانال‌های تلگرامی را جمع‌آوری و هر چند دقیقه آپدیت می‌کنند
+# ============================ منابع کانفیگ (۱۷ منبع زنده) ============================
 SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub2.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub3.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub4.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub5.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vless.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vmess.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/trojan.txt",
     "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
     "https://raw.githubusercontent.com/miladtahanian/Config-Collector/main/mixed_iran.txt",
     "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vless.txt",
+    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vmess.txt",
+    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/trojan.txt",
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/mix",
+    "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/reality",
+    "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/vless",
+    "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/vmess",
 ]
 
-# اگر دسترسی مستقیم به گیت‌هاب قطع بود، از این آینه‌ها تلاش می‌کنیم
 MIRROR_TEMPLATES = [
     "{url}",
     "https://mirror.ghproxy.com/{url}",
@@ -76,7 +88,7 @@ SUPPORTED_NETS = {"tcp", "ws", "grpc", "http", "httpupgrade", "xhttp", "h2"}
 
 # ============================ جلسه HTTP ============================
 SESSION = requests.Session()
-SESSION.trust_env = False  # تحت تأثیر پروکسی/متغیرهای محیطی سیستم قرار نگیر
+SESSION.trust_env = False
 SESSION.headers.update(UA)
 
 # رمزهای مدرن Shadowsocks (AEAD)
@@ -86,101 +98,18 @@ MODERN_SS_METHODS = {
     "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305",
 }
 
-# ============================ تشخیص خودکار قابلیت‌های هسته ============================
-# نسخه‌های جدید Xray بعضی قابلیت‌های قدیمی را حذف کرده‌اند؛ با run -test می‌سنجیم
-# تا کانفیگ‌ها با هر نسخه‌ای از هسته درست ساخته شوند.
-_FEATURES = {
-    "allow_insecure": True,     # tlsSettings.allowInsecure
-    "http_transport": True,     # ترنسپورت HTTP (h2)
-    "legacy_ss_cipher": True,   # رمزهای قدیمی SS مثل aes-128-cfb
-    "plain_vless": True,        # vless بدون TLS/Reality
-}
-_FEATURES_LOCK = threading.Lock()
-_FEATURES_PROBED = [False]
-
-
-def probe_features(xray_path: str) -> list:
-    """یک‌بار قابلیت‌های باینری هسته را می‌سنجد؛ فهرست قابلیت‌های پشتیبانی‌نشده را برمی‌گرداند."""
-    with _FEATURES_LOCK:
-        if _FEATURES_PROBED[0]:
-            return [k for k, v in _FEATURES.items() if not v]
-
-        def accepts(cfg: dict) -> bool:
-            f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-            try:
-                json.dump(cfg, f)
-                f.close()
-                p = subprocess.run([xray_path, "run", "-test", "-c", f.name],
-                                   capture_output=True, text=True, timeout=20,
-                                   creationflags=CREATE_NO_WINDOW)
-                return p.returncode == 0
-            except Exception:
-                return True  # اگر نتوانستیم بسنجیم، فرض کن پشتیبانی می‌شود
-            finally:
-                try:
-                    os.unlink(f.name)
-                except OSError:
-                    pass
-
-        dummy_sock = {"listen": "127.0.0.1", "port": 39099, "protocol": "socks",
-                      "settings": {"auth": "noauth", "udp": True}}
-        base = {"log": {"loglevel": "none"}, "inbounds": [dummy_sock]}
-        uuid = "b831381d-6324-4d53-ad4f-8cda48b30811"
-
-        _FEATURES["allow_insecure"] = accepts({**base, "outbounds": [
-            {"protocol": "trojan", "settings": {"servers": [
-                {"address": "1.2.3.4", "port": 443, "password": "x"}]},
-             "streamSettings": {"network": "tcp", "security": "tls",
-                                "tlsSettings": {"allowInsecure": True,
-                                                "serverName": "x.com",
-                                                "fingerprint": "chrome"}}}]})
-        _FEATURES["http_transport"] = accepts({**base, "outbounds": [
-            {"protocol": "vmess", "settings": {"vnext": [
-                {"address": "1.2.3.4", "port": 80,
-                 "users": [{"id": uuid, "alterId": 0, "security": "auto"}]}]},
-             "streamSettings": {"network": "http", "security": "none",
-                                "httpSettings": {"host": ["x.com"], "path": "/"}}}]})
-        _FEATURES["legacy_ss_cipher"] = accepts({**base, "outbounds": [
-            {"protocol": "shadowsocks", "settings": {"servers": [
-                {"address": "1.2.3.4", "port": 8388,
-                 "method": "aes-128-cfb", "password": "x"}]},
-             "streamSettings": {"network": "tcp", "security": "none"}}]})
-        _FEATURES["plain_vless"] = accepts({**base, "outbounds": [
-            {"protocol": "vless", "settings": {"vnext": [
-                {"address": "8.8.8.8", "port": 443,
-                 "users": [{"id": uuid, "encryption": "none"}]}]},
-             "streamSettings": {"network": "tcp", "security": "none"}}]})
-        _FEATURES_PROBED[0] = True
-        return [k for k, v in _FEATURES.items() if not v]
-
-
-def filter_supported(nodes: list) -> list:
-    """کانفیگ‌هایی که هسته فعلی از آن‌ها پشتیبانی نمی‌کند را حذف می‌کند."""
-    out = []
-    for n in nodes:
-        if n.proto == "vless" and not _FEATURES["plain_vless"]:
-            sec = (n.extra.get("sec") or "").lower()
-            if sec not in ("tls", "reality"):
-                continue
-        if n.proto == "ss" and not _FEATURES["legacy_ss_cipher"]:
-            if (n.extra.get("method") or "").lower() not in MODERN_SS_METHODS:
-                continue
-        if (n.extra.get("net") or "tcp") == "http" and not _FEATURES["http_transport"]:
-            continue
-        out.append(n)
-    return out
-
 
 # ============================ مدل داده ============================
 @dataclass
 class Node:
-    proto: str                 # vmess | vless | trojan | ss
+    proto: str
     name: str
     server: str
     port: int
     extra: dict = field(default_factory=dict)
-    latency: float | None = None   # میلی‌ثانیه
-    speed: float = 0.0             # مگابیت بر ثانیه
+    uri: str = ""
+    latency: float | None = None
+    speed: float = 0.0
 
     def key(self):
         ident = self.extra.get("id") or self.extra.get("password") or \
@@ -194,7 +123,6 @@ class Node:
 
 # ============================ ابزارهای پایه ============================
 def _b64d(s: str) -> str:
-    """دیکد base64 مقاوم (استاندارد و url-safe)."""
     s = "".join(s.split())
     s = s.replace("-", "+").replace("_", "/")
     s += "=" * (-len(s) % 4)
@@ -206,7 +134,7 @@ def _b64d(s: str) -> str:
 
 def _split_hostport(hp: str):
     hp = hp.strip().strip("/")
-    if hp.startswith("["):  # IPv6
+    if hp.startswith("["):
         host, _, rest = hp[1:].partition("]")
         port = rest.lstrip(":")
         try:
@@ -226,10 +154,10 @@ def _wait_port(port: int, timeout: float = 3.0) -> bool:
     end = time.time() + timeout
     while time.time() < end:
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
                 return True
         except OSError:
-            time.sleep(0.08)
+            time.sleep(0.05)
     return False
 
 
@@ -287,7 +215,6 @@ def _parse_vmess(payload: str):
 
 
 def _parse_userinfo_scheme(scheme: str, rest: str, default_sec: str = ""):
-    """پارس مشترک vless / trojan:  scheme://userinfo@host:port?params#name"""
     body, _, frag = rest.partition("#")
     if "@" not in body:
         return None
@@ -344,7 +271,7 @@ def _parse_ss(rest: str):
     if "?" in body:
         body, qs = body.split("?", 1)
         q = parse_qs(qs, keep_blank_values=True)
-        if q.get("plugin"):  # پلاگین‌های obfs/v2ray-plugin پشتیبانی نمی‌شوند
+        if q.get("plugin"):
             return None
     method = password = ""
     host = ""
@@ -379,7 +306,6 @@ def _parse_ss(rest: str):
 
 
 def parse_uri(uri: str):
-    """یک لینک کانفیگ را به Node تبدیل می‌کند؛ ناموفق → None"""
     if not uri:
         return None
     uri = uri.strip()
@@ -388,20 +314,23 @@ def parse_uri(uri: str):
     low = uri.lower()
     try:
         if low.startswith("vmess://"):
-            return _parse_vmess(uri[8:])
-        if low.startswith("vless://"):
-            return _parse_userinfo_scheme("vless", uri[8:])
-        if low.startswith("trojan://"):
-            return _parse_userinfo_scheme("trojan", uri[9:], default_sec="tls")
-        if low.startswith("ss://"):
-            return _parse_ss(uri[5:])
+            n = _parse_vmess(uri[8:])
+        elif low.startswith("vless://"):
+            n = _parse_userinfo_scheme("vless", uri[8:])
+        elif low.startswith("trojan://"):
+            n = _parse_userinfo_scheme("trojan", uri[9:], default_sec="tls")
+        elif low.startswith("ss://"):
+            n = _parse_ss(uri[5:])
+        else:
+            return None
     except Exception:
         return None
-    return None
+    if n is not None:
+        n.uri = uri
+    return n
 
 
 def decode_subscription(text: str) -> list:
-    """محتوای اشتراک (ساده یا base64) را به لیست لینک تبدیل می‌کند."""
     text = text.strip()
     if not text:
         return []
@@ -418,6 +347,87 @@ def decode_subscription(text: str) -> list:
         dec = _b64d(l)
         if "://" in dec:
             out.extend(x for x in dec.splitlines() if "://" in x)
+    return out
+
+
+# ============================ تشخیص خودکار قابلیت‌های هسته ============================
+_FEATURES = {
+    "allow_insecure": True,
+    "http_transport": True,
+    "legacy_ss_cipher": True,
+    "plain_vless": True,
+}
+_FEATURES_LOCK = threading.Lock()
+_FEATURES_PROBED = [False]
+
+
+def probe_features(xray_path: str) -> list:
+    with _FEATURES_LOCK:
+        if _FEATURES_PROBED[0]:
+            return [k for k, v in _FEATURES.items() if not v]
+
+        def accepts(cfg: dict) -> bool:
+            f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+            try:
+                json.dump(cfg, f)
+                f.close()
+                p = subprocess.run([xray_path, "run", "-test", "-c", f.name],
+                                   capture_output=True, text=True, timeout=20,
+                                   creationflags=CREATE_NO_WINDOW)
+                return p.returncode == 0
+            except Exception:
+                return True
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
+
+        dummy_sock = {"listen": "127.0.0.1", "port": 39099, "protocol": "socks",
+                      "settings": {"auth": "noauth", "udp": True}}
+        base = {"log": {"loglevel": "none"}, "inbounds": [dummy_sock]}
+        uuid = "b831381d-6324-4d53-ad4f-8cda48b30811"
+
+        _FEATURES["allow_insecure"] = accepts({**base, "outbounds": [
+            {"protocol": "trojan", "settings": {"servers": [
+                {"address": "1.2.3.4", "port": 443, "password": "x"}]},
+             "streamSettings": {"network": "tcp", "security": "tls",
+                                "tlsSettings": {"allowInsecure": True,
+                                                "serverName": "x.com",
+                                                "fingerprint": "chrome"}}}]})
+        _FEATURES["http_transport"] = accepts({**base, "outbounds": [
+            {"protocol": "vmess", "settings": {"vnext": [
+                {"address": "1.2.3.4", "port": 80,
+                 "users": [{"id": uuid, "alterId": 0, "security": "auto"}]}]},
+             "streamSettings": {"network": "http", "security": "none",
+                                "httpSettings": {"host": ["x.com"], "path": "/"}}}]})
+        _FEATURES["legacy_ss_cipher"] = accepts({**base, "outbounds": [
+            {"protocol": "shadowsocks", "settings": {"servers": [
+                {"address": "1.2.3.4", "port": 8388,
+                 "method": "aes-128-cfb", "password": "x"}]},
+             "streamSettings": {"network": "tcp", "security": "none"}}]})
+        _FEATURES["plain_vless"] = accepts({**base, "outbounds": [
+            {"protocol": "vless", "settings": {"vnext": [
+                {"address": "8.8.8.8", "port": 443,
+                 "users": [{"id": uuid, "encryption": "none"}]}]},
+             "streamSettings": {"network": "tcp", "security": "none"}}]})
+        _FEATURES_PROBED[0] = True
+        return [k for k, v in _FEATURES.items() if not v]
+
+
+def filter_supported(nodes: list) -> list:
+    out = []
+    for n in nodes:
+        if n.proto == "vless" and not _FEATURES["plain_vless"]:
+            sec = (n.extra.get("sec") or "").lower()
+            if sec not in ("tls", "reality"):
+                continue
+        if n.proto == "ss" and not _FEATURES["legacy_ss_cipher"]:
+            if (n.extra.get("method") or "").lower() not in MODERN_SS_METHODS:
+                continue
+        if (n.extra.get("net") or "tcp") == "http" and not _FEATURES["http_transport"]:
+            continue
+        out.append(n)
     return out
 
 
@@ -537,6 +547,20 @@ def find_xray() -> str:
     raise FileNotFoundError("هسته Xray پیدا نشد (xray.exe)")
 
 
+def find_logo() -> str | None:
+    name = "logo.png"
+    candidates = []
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+        candidates.append(os.path.join(base, name))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), name))
+    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), name))
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
 # ============================ پروکسی سیستم ویندوز ============================
 _PROXY_SET_FLAG = [False]
 _ALL_PROCS: list = []
@@ -544,7 +568,6 @@ _ALL_PROCS_LOCK = threading.Lock()
 
 
 def set_system_proxy(enable: bool, port: int = XRAY_HTTP_PORT):
-    """روشن/خاموش کردن پروکسی سیستم ویندوز (Internet Settings)."""
     if sys.platform != "win32":
         return
     try:
@@ -559,11 +582,10 @@ def set_system_proxy(enable: bool, port: int = XRAY_HTTP_PORT):
             else:
                 winreg.SetValueEx(k, "ProxyEnable", 0, winreg.REG_DWORD, 0)
         _PROXY_SET_FLAG[0] = enable
-        # اطلاع‌رسانی به ویندوز تا مرورگرها فوراً متوجه شوند
         import ctypes
         internet_set_option = ctypes.windll.Wininet.InternetSetOptionW
-        internet_set_option(None, 39, None, 0)  # INTERNET_OPTION_SETTINGS_CHANGED
-        internet_set_option(None, 37, None, 0)  # INTERNET_OPTION_REFRESH
+        internet_set_option(None, 39, None, 0)
+        internet_set_option(None, 37, None, 0)
     except Exception:
         pass
 
@@ -586,6 +608,35 @@ def _cleanup_atexit():
 atexit.register(_cleanup_atexit)
 
 
+# ============================ حافظه‌ی سرورهای خوب ============================
+def _cache_dir() -> str:
+    if sys.platform == "win32":
+        base = os.path.join(os.environ.get("APPDATA", tempfile.gettempdir()), APP_NAME)
+    else:
+        base = os.path.join(os.path.expanduser("~"), ".manjarvpn")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def load_cache() -> list:
+    try:
+        with open(os.path.join(_cache_dir(), "known_good.json"), encoding="utf-8") as f:
+            entries = json.load(f)
+        cutoff = time.time() - CACHE_TTL_DAYS * 86400
+        return [e for e in entries if isinstance(e, dict) and e.get("uri")
+                and e.get("ts", 0) >= cutoff]
+    except Exception:
+        return []
+
+
+def save_cache(entries: list):
+    try:
+        with open(os.path.join(_cache_dir(), "known_good.json"), "w", encoding="utf-8") as f:
+            json.dump(entries[:CACHE_MAX], f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
 # ============================ موتور اصلی ============================
 class VpnEngine:
     def __init__(self, log_cb=None, progress_cb=None):
@@ -600,14 +651,6 @@ class VpnEngine:
         self._port_counter = itertools.count(1)
         self._port_lock = threading.Lock()
         self._features_logged = False
-
-    def ensure_features(self):
-        xray = self.ensure_xray()
-        unsupported = probe_features(xray)
-        if unsupported and not self._features_logged:
-            self._features_logged = True
-            self.log(f"ℹ هسته Xray از این قابلیت‌ها پشتیبانی نمی‌کند (رد می‌شوند): "
-                     f"{', '.join(unsupported)}")
 
     # ---------- callbacks ----------
     def log(self, msg: str):
@@ -624,11 +667,19 @@ class VpnEngine:
             except Exception:
                 pass
 
-    # ---------- زیرساخت تست ----------
+    # ---------- زیرساخت ----------
     def ensure_xray(self) -> str:
         if not self.xray_path:
             self.xray_path = find_xray()
         return self.xray_path
+
+    def ensure_features(self):
+        xray = self.ensure_xray()
+        unsupported = probe_features(xray)
+        if unsupported and not self._features_logged:
+            self._features_logged = True
+            self.log(f"ℹ هسته Xray از این قابلیت‌ها پشتیبانی نمی‌کند (رد می‌شوند): "
+                     f"{', '.join(unsupported)}")
 
     def _next_port(self) -> int:
         with self._port_lock:
@@ -654,7 +705,7 @@ class VpnEngine:
             if proc in self.test_procs:
                 self.test_procs.remove(proc)
 
-    # ---------- بررسی اینترنت مستقیم ----------
+    # ---------- بررسی اینترنت ----------
     def check_internet(self):
         for url in ("http://cp.cloudflare.com/generate_204",
                     "https://www.gstatic.com/generate_204"):
@@ -667,7 +718,38 @@ class VpnEngine:
                 continue
         return False, None
 
-    # ---------- دریافت منابع ----------
+    # ---------- پیش‌فیلتر TCP (خیلی سریع) ----------
+    def _tcp_alive(self, server: str, port: int) -> bool:
+        try:
+            infos = socket.getaddrinfo(server, port, type=socket.SOCK_STREAM)
+        except Exception:
+            return False
+        try:
+            af, st, proto, cn, sa = infos[0]
+            with socket.create_connection(sa, timeout=TCP_PREFILTER_TIMEOUT):
+                return True
+        except Exception:
+            return False
+
+    def tcp_prefilter(self, nodes: list) -> list:
+        alive = []
+        total = len(nodes)
+        done = 0
+        with ThreadPoolExecutor(max_workers=TCP_PREFILTER_WORKERS) as ex:
+            futs = {ex.submit(self._tcp_alive, n.server, n.port): n for n in nodes}
+            for f in as_completed(futs):
+                n = futs[f]
+                if f.result():
+                    alive.append(n)
+                done += 1
+                if self.stop_flag.is_set():
+                    break
+                if done % 50 == 0 or done == total:
+                    self.progress("tcp", done, total,
+                                  f"پیش‌فیلتر سرورها {done}/{total} — {len(alive)} سرور زنده")
+        return alive
+
+    # ---------- دریافت موازی منابع ----------
     def _fetch_url(self, url: str) -> str | None:
         for tpl in MIRROR_TEMPLATES:
             if self.stop_flag.is_set():
@@ -680,26 +762,37 @@ class VpnEngine:
                 continue
         return None
 
-    def fetch_all(self, max_nodes: int = 6000) -> list:
+    def fetch_all(self, max_nodes: int = 8000) -> list:
         try:
             self.ensure_features()
         except Exception:
             pass
-        uris = []
         total = len(SUBSCRIPTION_SOURCES)
-        for i, src in enumerate(SUBSCRIPTION_SOURCES, 1):
-            if self.stop_flag.is_set():
-                break
-            self.progress("fetch", i, total, f"دریافت منبع {i}/{total} …")
-            text = self._fetch_url(src)
-            if text is None:
-                self.log(f"✗ منبع در دسترس نبود: {src}")
-                continue
-            got = decode_subscription(text)
-            self.log(f"✓ منبع {i}/{total}: {len(got)} کانفیگ")
-            uris.extend(got)
+        by_index: dict = {}
+        done = 0
+
+        def work(i, src):
+            return i, src, self._fetch_url(src)
+
+        with ThreadPoolExecutor(max_workers=min(10, total)) as ex:
+            futs = [ex.submit(work, i, src) for i, src in enumerate(SUBSCRIPTION_SOURCES, 1)]
+            for f in as_completed(futs):
+                i, src, text = f.result()
+                done += 1
+                if text is None:
+                    self.log(f"✗ منبع در دسترس نبود: {src}")
+                else:
+                    got = decode_subscription(text)
+                    self.log(f"✓ منبع {i}/{total}: {len(got)} کانفیگ")
+                    by_index[i] = got
+                self.progress("fetch", done, total, f"دریافت {done}/{total} منبع …")
+                if self.stop_flag.is_set():
+                    break
+
+        uris = [u for i in sorted(by_index) for u in by_index[i]]
         nodes = []
         seen = set()
+        per_server = {}
         for u in uris:
             n = parse_uri(u)
             if n is None:
@@ -707,7 +800,11 @@ class VpnEngine:
             k = n.key()
             if k in seen:
                 continue
+            sk = (n.server.lower(), n.port)
+            if per_server.get(sk, 0) >= 3:   # حداکثر ۳ کانفیگ از هر سرور → تنوع بیشتر
+                continue
             seen.add(k)
+            per_server[sk] = per_server.get(sk, 0) + 1
             nodes.append(n)
             if len(nodes) >= max_nodes:
                 break
@@ -731,7 +828,7 @@ class VpnEngine:
                 self.test_procs.append(proc)
             if proc.poll() is not None:
                 return None
-            if not _wait_port(port, 2.5):
+            if not _wait_port(port, 2.0):
                 return None
             proxies = {"http": f"socks5h://127.0.0.1:{port}",
                        "https": f"socks5h://127.0.0.1:{port}"}
@@ -768,13 +865,13 @@ class VpnEngine:
                 self.test_procs.append(proc)
             if proc.poll() is not None:
                 return 0.0
-            if not _wait_port(port, 2.5):
+            if not _wait_port(port, 2.0):
                 return 0.0
             proxies = {"http": f"socks5h://127.0.0.1:{port}",
                        "https": f"socks5h://127.0.0.1:{port}"}
             t0 = time.time()
             total = 0
-            with SESSION.get("https://speed.cloudflare.com/__down?bytes=10000000",
+            with SESSION.get("https://speed.cloudflare.com/__down?bytes=6000000",
                              stream=True, proxies=proxies,
                              timeout=(5, SPEED_TIMEOUT)) as r:
                 if r.status_code >= 400:
@@ -786,9 +883,9 @@ class VpnEngine:
                     if time.time() - t0 > SPEED_TIMEOUT:
                         break
             elapsed = time.time() - t0
-            if elapsed <= 0.05 or total < 100_000:  # کمتر از ۱۰۰KB یعنی نامعتبر
+            if elapsed <= 0.05 or total < 100_000:
                 return 0.0
-            return total * 8.0 / elapsed / 1e6  # Mbps
+            return total * 8.0 / elapsed / 1e6
         except Exception:
             return 0.0
         finally:
@@ -801,20 +898,26 @@ class VpnEngine:
 
     # ---------- اسکن کامل ----------
     def scan(self, nodes: list):
-        """مرحله ۱: پینگ موازی همه؛ مرحله ۲: تست سرعت بهترین‌ها. خروجی: (بهترین، سالم‌ها)"""
+        """پیش‌فیلتر TCP → پینگ موازی → تست سرعت بهترین‌ها. خروجی: (بهترین، سالم‌ها)"""
         try:
             self.ensure_features()
         except Exception:
             pass
         if len(nodes) > MAX_TEST_NODES:
             nodes = random.sample(nodes, MAX_TEST_NODES)
-            self.log(f"→ نمونه‌گیری تصادفی: تست {len(nodes)} کانفیگ")
+            self.log(f"→ نمونه‌گیری تصادفی: بررسی {len(nodes)} کانفیگ")
 
-        # مرحله پینگ
+        alive = self.tcp_prefilter(nodes)
+        if self.stop_flag.is_set():
+            return None, []
+        self.log(f"⚡ پیش‌فیلتر: {len(alive)} سرور از {len(nodes)} زنده — شروع تست پینگ")
+        if len(alive) > MAX_XRAY_LATENCY_TESTS:
+            alive = random.sample(alive, MAX_XRAY_LATENCY_TESTS)
+
         lat_ok = []
         done = 0
         with ThreadPoolExecutor(max_workers=CONCURRENT_TESTS) as ex:
-            futs = {ex.submit(self.test_latency, n): n for n in nodes}
+            futs = {ex.submit(self.test_latency, n): n for n in alive}
             for f in as_completed(futs):
                 if self.stop_flag.is_set():
                     break
@@ -824,16 +927,18 @@ class VpnEngine:
                 if r is not None:
                     n.latency = r
                     lat_ok.append(n)
-                if done % 10 == 0 or done == len(nodes):
-                    self.progress("latency", done, len(nodes),
-                                  f"تست پینگ {done}/{len(nodes)} — {len(lat_ok)} کانفیگ سالم")
+                if done % 10 == 0 or done == len(alive):
+                    self.progress("latency", done, len(alive),
+                                  f"تست پینگ {done}/{len(alive)} — {len(lat_ok)} کانفیگ سالم")
         if self.stop_flag.is_set():
             return None, lat_ok
         lat_ok.sort(key=lambda n: n.latency)
-        self.log(f"✓ پینگ تمام شد: {len(lat_ok)} کانفیگ سالم از {len(nodes)}")
+        self.log(f"✓ پینگ تمام شد: {len(lat_ok)} کانفیگ سالم از {len(alive)}")
 
-        # مرحله سرعت
         top = lat_ok[:TOP_SPEED_TESTS]
+        rest = lat_ok[TOP_SPEED_TESTS:]
+        if rest and EXTRA_SPEED_SAMPLES:
+            top = top + random.sample(rest, min(EXTRA_SPEED_SAMPLES, len(rest)))
         if top:
             sdone = 0
             with ThreadPoolExecutor(max_workers=CONCURRENT_SPEED_TESTS) as ex:
@@ -844,10 +949,9 @@ class VpnEngine:
                     sdone += 1
                     self.progress("speed", sdone, len(top),
                                   f"تست سرعت {sdone}/{len(top)} — {n.display()} ({n.speed:.1f} Mbps)")
-            for n in top:
+            for n in sorted(top, key=lambda x: -x.speed):
                 self.log(f"   {n.display():<40} پینگ {int(n.latency):>4}ms  سرعت {n.speed:>6.1f} Mbps")
 
-        # انتخاب بهترین
         fast = [n for n in top if n.speed >= MIN_GOOD_SPEED_MBPS]
         if fast:
             best = max(fast, key=lambda n: (n.speed, -n.latency))
@@ -856,6 +960,57 @@ class VpnEngine:
         else:
             best = None
         return best, lat_ok
+
+    # ---------- مسیر سریع: سرورهای خوب قبلی ----------
+    def quick_connect_check(self):
+        """کانفیگ‌های خوب قبلی را تست می‌کند؛ اگر یکی سریع بود برمی‌گرداند (اتصال چند‌ثانیه‌ای)."""
+        entries = load_cache()
+        if not entries:
+            return None, []
+        nodes = []
+        for e in entries:
+            n = parse_uri(e.get("uri", ""))
+            if n is not None:
+                n.speed = float(e.get("speed", 0) or 0)
+                nodes.append(n)
+        if not nodes:
+            return None, []
+        self.log(f"⚡ {len(nodes)} سرور خوب قبلی در حافظه — تست سریع…")
+        alive = self.tcp_prefilter(nodes)
+        if self.stop_flag.is_set() or not alive:
+            return None, []
+        lat_ok = []
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futs = {ex.submit(self.test_latency, n): n for n in alive}
+            for f in as_completed(futs):
+                n = futs[f]
+                r = f.result()
+                if r is not None:
+                    n.latency = r
+                    lat_ok.append(n)
+        if self.stop_flag.is_set() or not lat_ok:
+            return None, []
+        lat_ok.sort(key=lambda n: n.latency)
+        top = lat_ok[:3]
+        for n in top:
+            n.speed = self.test_speed(n)
+            if self.stop_flag.is_set():
+                return None, lat_ok
+        best = max(top, key=lambda n: (n.speed, -n.latency), default=None)
+        if best and best.speed >= QUICK_MIN_SPEED_MBPS:
+            return best, lat_ok
+        return None, lat_ok
+
+    def update_cache(self, best: Node, runners: list):
+        entries = load_cache()
+        by_uri = {e["uri"]: e for e in entries}
+        for n in [best] + list(runners[:5]):
+            if not n.uri or n.speed <= 0:
+                continue
+            by_uri[n.uri] = {"uri": n.uri, "latency": int(n.latency or 0),
+                             "speed": round(n.speed, 2), "ts": time.time()}
+        entries = sorted(by_uri.values(), key=lambda e: -float(e.get("speed", 0)))
+        save_cache(entries)
 
     # ---------- اتصال نهایی ----------
     def connect(self, node: Node) -> bool:
