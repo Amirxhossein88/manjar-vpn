@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # ============================ تنظیمات قابل تغییر ============================
 MAX_TEST_NODES = 600          # حداکثر کانفیگ برای پیش‌فیلتر TCP
@@ -45,6 +45,9 @@ SPEED_TIMEOUT = 7
 SPEED_MAX_BYTES = 6_000_000
 GOOD_SPEED_EARLY = 12.0       # Mbps — اگر برسد دیگر لازم نیست صبر کامل کنیم
 MIN_GOOD_SPEED_MBPS = 0.3
+# تست واقعی: علاوه بر 204، یک سایت واقعی TLS هم باید باز شود (ضد «وصل شد ولی کار نمی‌کند»)
+REAL_SITE_URL = "https://www.wikipedia.org/static/favicon/wikipedia.ico"
+UPLOAD_TEST_URL = "https://speed.cloudflare.com/__up"
 
 # حافظه‌ی سرورهای خوب (اتصال سریع در اجراهای بعدی)
 CACHE_MAX = 20
@@ -590,6 +593,30 @@ def set_system_proxy(enable: bool, port: int = XRAY_HTTP_PORT):
         pass
 
 
+def cleanup_stale_proxy() -> bool:
+    """اگر از اجرای قبلی (کرش/بسته‌شدن اجباری) پروکسی سیستم روشن مانده، پاکش می‌کند."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        kp = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, kp, 0, winreg.KEY_READ) as k:
+            try:
+                enabled, _ = winreg.QueryValueEx(k, "ProxyEnable")
+            except OSError:
+                return False
+            try:
+                server, _ = winreg.QueryValueEx(k, "ProxyServer")
+            except OSError:
+                server = ""
+        if enabled and any(p in str(server) for p in ("10808", "10809")):
+            set_system_proxy(False)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _cleanup_atexit():
     try:
         if _PROXY_SET_FLAG[0]:
@@ -645,6 +672,9 @@ class VpnEngine:
         self.stop_flag = threading.Event()
         self.xray_path: str | None = None
         self.proc: subprocess.Popen | None = None
+        self.socks_port = 10808
+        self.http_port = 10809
+        self._err_file = None
         self.current_node: Node | None = None
         self.test_procs: list = []
         self.test_procs_lock = threading.Lock()
@@ -685,11 +715,16 @@ class VpnEngine:
         with self._port_lock:
             return 30000 + (next(self._port_counter) % 20000)
 
-    def _start_xray(self, cfg_path: str) -> subprocess.Popen:
+    def _start_xray(self, cfg_path: str, stderr_path: str | None = None) -> subprocess.Popen:
         xray = self.ensure_xray()
+        if stderr_path:
+            err = open(stderr_path, "w", encoding="utf-8")
+            self._err_file = err
+        else:
+            err = subprocess.DEVNULL
         proc = subprocess.Popen(
             [xray, "run", "-c", cfg_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=err,
             creationflags=CREATE_NO_WINDOW,
         )
         with _ALL_PROCS_LOCK:
@@ -837,6 +872,8 @@ class VpnEngine:
                             proxies=proxies, timeout=LATENCY_TIMEOUT)
             if r.status_code >= 400:
                 return None
+            if not self._real_site_ok(proxies):
+                return None
             return (time.time() - t0) * 1000.0
         except Exception:
             return None
@@ -895,6 +932,41 @@ class VpnEngine:
                 os.unlink(tmp)
             except OSError:
                 pass
+
+    # ---------- تست‌های تکمیلی ----------
+    def _real_site_ok(self, proxies: dict, timeout: float = 6.0) -> bool:
+        """باز شدن یک سایت واقعی TLS از داخل تونل (ضد «وصل شد ولی کار نمی‌کند»)."""
+        try:
+            r = SESSION.get(REAL_SITE_URL, proxies=proxies, stream=True,
+                            timeout=(4, timeout))
+            ok = r.status_code < 400
+            first = next(r.iter_content(4096), b"")
+            r.close()
+            return ok and len(first) > 0
+        except Exception:
+            return False
+
+    def measure_upload(self, seconds: float = 6.0) -> float:
+        """اندازه‌گیری سرعت آپلود از داخل تونل فعال (Mbps)."""
+        if not self.proc:
+            return 0.0
+        port = self.http_port
+        proxies = {"http": f"http://127.0.0.1:{port}",
+                   "https": f"http://127.0.0.1:{port}"}
+        payload = b"x" * 300_000
+        try:
+            t0 = time.time()
+            sent = 0
+            with SESSION.post(UPLOAD_TEST_URL, data=payload, proxies=proxies,
+                              timeout=(5, seconds)) as r:
+                if r.status_code < 400:
+                    sent = len(payload)
+            el = time.time() - t0
+            if sent <= 0 or el <= 0.05:
+                return 0.0
+            return sent * 8.0 / el / 1e6
+        except Exception:
+            return 0.0
 
     # ---------- اسکن کامل ----------
     def scan(self, nodes: list):
@@ -1013,31 +1085,60 @@ class VpnEngine:
         save_cache(entries)
 
     # ---------- اتصال نهایی ----------
+    def _alloc_local_port(self, start: int) -> int:
+        p = start
+        for _ in range(40):
+            s = socket.socket()
+            try:
+                s.bind(("127.0.0.1", p))
+                return p
+            except OSError:
+                p += 10
+            finally:
+                s.close()
+        return start
+
+    def _read_err_tail(self, path: str, limit: int = 300) -> str:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                return f.read()[-limit:].strip()
+        except Exception:
+            return ""
+
     def connect(self, node: Node) -> bool:
         self.disconnect(restore_proxy=False)
-        cfg = build_xray_config(node, XRAY_SOCKS_PORT, XRAY_HTTP_PORT)
+        # پورت‌های آزاد (اگر v2rayN و … روی 10808 بود، تداخل پیش نیاید)
+        self.socks_port = self._alloc_local_port(10808)
+        self.http_port = self._alloc_local_port(10809)
+        cfg = build_xray_config(node, self.socks_port, self.http_port)
         if cfg is None:
             raise RuntimeError("ساخت کانفیگ برای این نود ممکن نشد")
         tmp = os.path.join(tempfile.gettempdir(), "manjarvpn_main.json")
+        errlog = os.path.join(tempfile.gettempdir(), "manjarvpn_main_err.log")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f)
         self.progress("connect", 1, 1, "راه‌اندازی تونل نهایی…")
-        self.proc = self._start_xray(tmp)
-        if not _wait_port(XRAY_SOCKS_PORT, 5) or not _wait_port(XRAY_HTTP_PORT, 5):
+        self.proc = self._start_xray(tmp, stderr_path=errlog)
+        if not _wait_port(self.socks_port, 5) or not _wait_port(self.http_port, 5):
+            tail = self._read_err_tail(errlog)
             self.disconnect(restore_proxy=False)
-            raise RuntimeError("هسته Xray بالا نیامد")
+            raise RuntimeError("هسته Xray بالا نیامد" + (f": {tail}" if tail else ""))
+        proxies = {"http": f"http://127.0.0.1:{self.http_port}",
+                   "https": f"http://127.0.0.1:{self.http_port}"}
         try:
             r = SESSION.get("http://cp.cloudflare.com/generate_204",
-                            proxies={"http": f"http://127.0.0.1:{XRAY_HTTP_PORT}",
-                                     "https": f"http://127.0.0.1:{XRAY_HTTP_PORT}"},
-                            timeout=10)
+                            proxies=proxies, timeout=10)
             ok = r.status_code < 400
         except Exception:
             ok = False
+        if ok and not self._real_site_ok(proxies, timeout=8):
+            ok = False
         if not ok:
+            tail = self._read_err_tail(errlog)
             self.disconnect(restore_proxy=False)
-            raise RuntimeError("تونل بالا آمد ولی پاسخ نداد")
-        set_system_proxy(True)
+            raise RuntimeError("تونل پاسخ نداد (سایت واقعی هم باز نشد)"
+                               + (f" — {tail}" if tail else ""))
+        set_system_proxy(True, port=self.http_port)
         self.current_node = node
         return True
 
@@ -1048,6 +1149,12 @@ class VpnEngine:
                 if self.proc in _ALL_PROCS:
                     _ALL_PROCS.remove(self.proc)
             self.proc = None
+        if getattr(self, "_err_file", None):
+            try:
+                self._err_file.close()
+            except Exception:
+                pass
+            self._err_file = None
         if restore_proxy:
             set_system_proxy(False)
         self.current_node = None
