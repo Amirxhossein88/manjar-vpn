@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine v1.1
+ManjarVPN Engine v1.3
 =====================
-موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۱۷ منبع، پیش‌فیلتر TCP،
+موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۳۰ منبع زنده، پیش‌فیلتر TCP،
 تست پینگ + تست سرعت واقعی با هسته Xray، حافظه‌ی سرورهای خوب قبلی
-(اتصال مجدد در چند ثانیه)، انتخاب بهترین کانفیگ و اتصال + پروکسی سیستم ویندوز.
+(اتصال مجدد در چند ثانیه)، انتخاب بهترین کانفیگ و اتصال + پروکسی سیستم ویندوز،
+نگهبان اتصال با چک سبک + تعمیر بی‌صدا (بدون قطع‌های کاذب).
 """
 from __future__ import annotations
 
@@ -29,13 +30,13 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # ============================ تنظیمات قابل تغییر ============================
-MAX_TEST_NODES = 600          # حداکثر کانفیگ برای پیش‌فیلتر TCP
+MAX_TEST_NODES = 800          # حداکثر کانفیگ برای پیش‌فیلتر TCP
 TCP_PREFILTER_WORKERS = 200   # اتصال‌های همزمان TCP (خیلی سبک است)
 TCP_PREFILTER_TIMEOUT = 1.5   # ثانیه
-MAX_XRAY_LATENCY_TESTS = 320  # بعد از پیش‌فیلتر، حداکثر تست پینگ واقعی
+MAX_XRAY_LATENCY_TESTS = 380  # بعد از پیش‌فیلتر، حداکثر تست پینگ واقعی
 CONCURRENT_TESTS = 48         # تست‌های پینگ همزمان
 TOP_SPEED_TESTS = 8           # بهترین‌های پینگ برای تست سرعت
 EXTRA_SPEED_SAMPLES = 3       # + چند نمونه تصادفی سالم برای تنوع
@@ -60,31 +61,50 @@ XRAY_HTTP_PORT = 10809
 UA = {"User-Agent": f"{APP_NAME}/{VERSION}"}
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# ============================ منابع کانفیگ (۱۷ منبع زنده) ============================
+# ============================ منابع کانفیگ (۲۹ منبع زنده) ============================
 SUBSCRIPTION_SOURCES = [
+    # barry-far — دسته‌های اصلی
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub2.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub3.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub4.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub5.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub6.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub7.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub8.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub9.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub10.txt",
+    # barry-far — تفکیک بر اساس پروتکل
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vless.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vmess.txt",
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/trojan.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/ss.txt",
+    # جمع‌کننده‌ها
     "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt",
+    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity.txt",
+    "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/all_configs.txt",
+    "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/server.txt",
     "https://raw.githubusercontent.com/miladtahanian/Config-Collector/main/mixed_iran.txt",
+    "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt",
+    "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt",
+    "https://raw.githubusercontent.com/ripaojiedian/freenode/main/sub",
+    # V2RayRoot
     "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vless.txt",
     "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vmess.txt",
     "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/trojan.txt",
+    # ircfspace/tvc
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/mix",
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/reality",
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/vless",
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/vmess",
+    "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/trojan",
 ]
 
 MIRROR_TEMPLATES = [
     "{url}",
-    "https://mirror.ghproxy.com/{url}",
+    "https://ghfast.top/{url}",
     "https://gh-proxy.com/{url}",
+    "https://mirror.ghproxy.com/{url}",
 ]
 
 SUPPORTED_NETS = {"tcp", "ws", "grpc", "http", "httpupgrade", "xhttp", "h2"}
@@ -594,7 +614,8 @@ def set_system_proxy(enable: bool, port: int = XRAY_HTTP_PORT):
 
 
 def cleanup_stale_proxy() -> bool:
-    """اگر از اجرای قبلی (کرش/بسته‌شدن اجباری) پروکسی سیستم روشن مانده، پاکش می‌کند."""
+    """اگر از اجرای قبلی (کرش/بسته‌شدن اجباری) پروکسی سیستم روشن مانده و مرده است، پاکش می‌کند.
+    هر 127.0.0.1:پورت در بازه‌ی 10000-19999 که هیچ برنامه‌ای رویش گوش نمی‌دهد = پروکسی مرده."""
     if sys.platform != "win32":
         return False
     try:
@@ -609,7 +630,22 @@ def cleanup_stale_proxy() -> bool:
                 server, _ = winreg.QueryValueEx(k, "ProxyServer")
             except OSError:
                 server = ""
-        if enabled and any(p in str(server) for p in ("10808", "10809")):
+        if not enabled:
+            return False
+        stale = False
+        for part in str(server).split(";"):
+            part = part.strip()
+            if "=" in part:                      # فرمت http=host:port;https=...
+                part = part.split("=", 1)[1].strip()
+            if part.startswith("127.0.0.1:"):
+                try:
+                    port = int(part.split(":", 1)[1])
+                except ValueError:
+                    continue
+                if 10000 <= port <= 19999 and not _wait_port(port, 0.4):
+                    stale = True                 # هیچ‌کس گوش نمی‌دهد → پروکسی مرده
+                    break
+        if stale:
             set_system_proxy(False)
             return True
     except Exception:
@@ -676,6 +712,7 @@ class VpnEngine:
         self.http_port = 10809
         self._err_file = None
         self.current_node: Node | None = None
+        self.conn_epoch = 0          # با هر اتصال +۱؛ نگهبانِ قدیمی با epoch قدیمی خارج می‌شود
         self.test_procs: list = []
         self.test_procs_lock = threading.Lock()
         self._port_counter = itertools.count(1)
@@ -1084,6 +1121,49 @@ class VpnEngine:
         entries = sorted(by_uri.values(), key=lambda e: -float(e.get("speed", 0)))
         save_cache(entries)
 
+    # ---------- نگهبان اتصال: چک سبک (بدون دانلود سنگین) ----------
+    def health_check(self, timeout: float = 7.0) -> bool:
+        """چک سبک: آیا تونل زنده است؟ فقط یک درخواست 204 — بدون دانلود حجمی.
+        (باگ قطع‌های کاذب: قبلا هر ۳ ثانیه ۱۲۸KB دانلود می‌شد که روی سرورهای شلوغ
+        تایم‌اوت می‌شد و برنامه اتصالِ سالم را قطع می‌کرد.)"""
+        if not self.proc or self.proc.poll() is not None:
+            return False
+        proxies = {"http": f"http://127.0.0.1:{self.http_port}",
+                   "https": f"http://127.0.0.1:{self.http_port}"}
+        for url in ("http://cp.cloudflare.com/generate_204",
+                    "http://www.gstatic.com/generate_204"):
+            try:
+                r = SESSION.get(url, proxies=proxies, timeout=timeout)
+                if r.status_code < 500:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def light_speed(self, bytes_to: int = 262144, timeout: float = 8.0) -> float:
+        """نمونه‌گیری سبک سرعت دانلود از داخل تونل فعال (هر ~۲۰ ثانیه یک‌بار)."""
+        if not self.proc or self.proc.poll() is not None:
+            return 0.0
+        proxies = {"http": f"http://127.0.0.1:{self.http_port}",
+                   "https": f"http://127.0.0.1:{self.http_port}"}
+        try:
+            t0 = time.time()
+            total = 0
+            with SESSION.get(f"https://speed.cloudflare.com/__down?bytes={bytes_to}",
+                             stream=True, proxies=proxies, timeout=(5, timeout)) as r:
+                if r.status_code >= 400:
+                    return 0.0
+                for chunk in r.iter_content(65536):
+                    total += len(chunk)
+                    if total >= bytes_to or time.time() - t0 > timeout:
+                        break
+            el = time.time() - t0
+            if el <= 0.05 or total < 50_000:
+                return 0.0
+            return total * 8.0 / el / 1e6
+        except Exception:
+            return 0.0
+
     # ---------- اتصال نهایی ----------
     def _alloc_local_port(self, start: int) -> int:
         p = start
@@ -1140,6 +1220,7 @@ class VpnEngine:
                                + (f" — {tail}" if tail else ""))
         set_system_proxy(True, port=self.http_port)
         self.current_node = node
+        self.conn_epoch += 1          # فقط اتصال موفق — نگهبان‌های قدیمی‌تر خودبه‌خود متوقف می‌شوند
         return True
 
     def disconnect(self, restore_proxy: bool = True):
