@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine v1.3
+ManjarVPN Engine v1.4
 =====================
 موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۳۰ منبع زنده، پیش‌فیلتر TCP،
-تست پینگ + تست سرعت واقعی با هسته Xray، حافظه‌ی سرورهای خوب قبلی
-(اتصال مجدد در چند ثانیه)، انتخاب بهترین کانفیگ و اتصال + پروکسی سیستم ویندوز،
+تست پینگ، سپس «تست عمیق» هر کاندید با یک هسته Xray: باز کردن واقعی
+یوتوب / اینستاگرام / تلگرام از داخل همان تونل + تست سرعت واقعی دانلود و آپلود،
+و در پایان اتصال به سروری که هم پینگ و هم سرعت بهتری دارد و سایت‌ها را واقعا باز کرده،
+حافظه‌ی سرورهای خوب قبلی (اتصال مجدد در چند ثانیه)،
+انتخاب بهترین کانفیگ و اتصال + پروکسی سیستم ویندوز،
 نگهبان اتصال با چک سبک + تعمیر بی‌صدا (بدون قطع‌های کاذب).
 """
 from __future__ import annotations
@@ -30,7 +33,7 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # ============================ تنظیمات قابل تغییر ============================
 MAX_TEST_NODES = 800          # حداکثر کانفیگ برای پیش‌فیلتر TCP
@@ -49,6 +52,34 @@ MIN_GOOD_SPEED_MBPS = 0.3
 # تست واقعی: علاوه بر 204، یک سایت واقعی TLS هم باید باز شود (ضد «وصل شد ولی کار نمی‌کند»)
 REAL_SITE_URL = "https://www.wikipedia.org/static/favicon/wikipedia.ico"
 UPLOAD_TEST_URL = "https://speed.cloudflare.com/__up"
+
+# ====== تست عمیق هر کاندید (دقیقا طبق خواسته‌ی کاربر) ======
+# برنامه با هر کاندیدِ کم‌پینگ، یک هسته Xray بالا می‌آورد و از داخل همان تونل:
+#   ۱) یوتوب و اینستاگرام و تلگرام را واقعا باز می‌کند (حداقل ۲ تا از ۳ باید باز شود)
+#   ۲) سرعت دانلود واقعی (Cloudflare) را می‌سنجد
+#   ۳) سرعت آپلود واقعی را می‌سنجد
+# بعد بین کاندیدهایی که سایت‌ها را باز کردند، بهترین (بیشترین سرعت، بعد کم‌ترین پینگ) وصل می‌شود.
+SITE_TARGETS = [
+    ("یوتوب",      "https://www.youtube.com/generate_204"),
+    ("اینستاگرام", "https://www.instagram.com/robots.txt"),
+    ("تلگرام",     "https://web.telegram.org/k/"),
+]
+SITE_MIN_PASS = 2             # حداقل چند سایت از ۳ باید باز شود تا کاندید تایید شود
+DEEP_POOL = 40                # کم‌پینگ‌ترین‌ها که تست عمیق می‌شوند
+DEEP_TARGET = 12              # به‌محض این تعداد نتیجه‌ی کامل، بقیه رها می‌شوند
+DEEP_WORKERS = 5              # چند کاندید همزمان تست عمیق شوند
+SITE_TIMEOUT = 6              # ثانیه برای هر سایت
+UPLOAD_PROBE_BYTES = 400_000  # حجم نمونه آپلود هر کاندید
+
+# چک سبکِ مرحله‌ی پینگ: یک 204 واقعی روی TLS (سریع — فقط برای ردکردن کانفیگ‌های مرده)
+LIGHT_TLS_URL = "https://www.gstatic.com/generate_204"
+
+# برای سازگاری با کدهای قبلی
+VERIFY_TARGETS = SITE_TARGETS
+VERIFY_POOL = DEEP_POOL
+VERIFY_TARGET_COUNT = DEEP_TARGET
+VERIFY_WORKERS = DEEP_WORKERS
+VERIFY_TIMEOUT = SITE_TIMEOUT
 
 # حافظه‌ی سرورهای خوب (اتصال سریع در اجراهای بعدی)
 CACHE_MAX = 20
@@ -133,6 +164,7 @@ class Node:
     uri: str = ""
     latency: float | None = None
     speed: float = 0.0
+    up_speed: float = 0.0
 
     def key(self):
         ident = self.extra.get("id") or self.extra.get("password") or \
@@ -983,8 +1015,174 @@ class VpnEngine:
         except Exception:
             return False
 
+    def _light_tls_ok(self, proxies: dict, timeout: float = 6.0) -> bool:
+        """چک سبکِ TLS در مرحله‌ی پینگ: یک 204 واقعی روی https (سریع)."""
+        try:
+            r = SESSION.get(LIGHT_TLS_URL, proxies=proxies, timeout=(3, timeout))
+            return r.status_code < 400
+        except Exception:
+            return False
+
+    # ---------- باز کردن واقعی یوتوب / اینستاگرام / تلگرام از داخل تونل ----------
+    _BROWSER_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
+
+    def check_sites(self, proxies: dict, timeout: float = SITE_TIMEOUT) -> list:
+        """سایت‌های واقعی را یکی‌یکی با این تونل باز می‌کند؛ لیست بازشده‌ها برمی‌گردد.
+        همان کاری که کاربر بعدا با مرورگر/برنامه انجام می‌دهد — ضد «پینگ می‌دهد ولی هیچی باز نمی‌شود»."""
+        opened = []
+        for name, url in SITE_TARGETS:
+            if self.stop_flag.is_set():
+                break
+            try:
+                r = SESSION.get(url, proxies=proxies, stream=True,
+                                timeout=(4, timeout), headers=self._BROWSER_UA)
+                ok = r.status_code < 400
+                if ok and r.status_code != 204:      # 204 بدنه ندارد
+                    first = next(r.iter_content(2048), b"")
+                    ok = len(first) > 0
+                r.close()
+                if ok:
+                    opened.append(name)
+            except Exception:
+                continue
+        return opened
+
+    # ---------- تست عمیق: یک Xray برای همه‌ی سنجه‌ها (سایت‌ها + دان + آپ) ----------
+    def deep_test(self, node: Node):
+        """یک کانفیگ را کامل می‌سنجد؛ اگر حداقل SITE_MIN_PASS سایت باز کند،
+        خود Node با latency/speed/up_speed/verified پر شده برمی‌گردد، وگرنه None.
+        فقط «یک» هسته Xray برای همه‌ی سنجه‌ها بالا می‌آید (سریع‌تر از دو مرحله‌ی جدا)."""
+        if self.stop_flag.is_set():
+            return None
+        port = self._next_port()
+        cfg = build_xray_config(node, port)
+        if cfg is None:
+            return None
+        tmp = os.path.join(tempfile.gettempdir(),
+                           f"manjarvpn_deep_{os.getpid()}_{port}.json")
+        proc = None
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cfg, f)
+            proc = self._start_xray(tmp)
+            with self.test_procs_lock:
+                self.test_procs.append(proc)
+            if proc.poll() is not None:
+                return None
+            if not _wait_port(port, 2.0):
+                return None
+            proxies = {"http": f"socks5h://127.0.0.1:{port}",
+                       "https": f"socks5h://127.0.0.1:{port}"}
+
+            # ۱) سایت‌های واقعی باید باز شوند
+            opened = self.check_sites(proxies)
+            if self.stop_flag.is_set():
+                return None
+            if len(opened) < SITE_MIN_PASS:
+                return None
+            node.extra["verified"] = True
+            node.extra["opened"] = "،".join(opened)
+
+            # ۲) سرعت دانلود واقعی از داخل همان تونل
+            node.speed = self._dl_speed_on_port(proxies)
+
+            # ۳) سرعت آپلود واقعی از داخل همان تونل
+            if not self.stop_flag.is_set():
+                node.up_speed = self._ul_speed_on_port(proxies)
+            return node
+        except Exception:
+            return None
+        finally:
+            if proc:
+                self._stop_xray(proc)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _dl_speed_on_port(self, proxies: dict, timeout: float = SPEED_TIMEOUT) -> float:
+        """تست سرعت دانلود روی یک تونل مشخص (Mbps)."""
+        try:
+            t0 = time.time()
+            total = 0
+            with SESSION.get("https://speed.cloudflare.com/__down?bytes=6000000",
+                             stream=True, proxies=proxies,
+                             timeout=(5, timeout)) as r:
+                if r.status_code >= 400:
+                    return 0.0
+                for chunk in r.iter_content(65536):
+                    total += len(chunk)
+                    if total >= SPEED_MAX_BYTES:
+                        break
+                    if time.time() - t0 > timeout:
+                        break
+                    if GOOD_SPEED_EARLY and total > 300_000 and \
+                            total * 8.0 / (time.time() - t0) / 1e6 >= GOOD_SPEED_EARLY:
+                        break          # سرعت خوب است — لازم نیست بیشتر دان کنیم
+            elapsed = time.time() - t0
+            if elapsed <= 0.05 or total < 100_000:
+                return 0.0
+            return total * 8.0 / elapsed / 1e6
+        except Exception:
+            return 0.0
+
+    def _ul_speed_on_port(self, proxies: dict, timeout: float = 10.0) -> float:
+        """تست سرعت آپلود روی یک تونل مشخص (Mbps)."""
+        payload = b"x" * UPLOAD_PROBE_BYTES
+        try:
+            t0 = time.time()
+            with SESSION.post(UPLOAD_TEST_URL, data=payload, proxies=proxies,
+                              timeout=(5, timeout)) as r:
+                if r.status_code >= 400:
+                    return 0.0
+            el = time.time() - t0
+            if el <= 0.05:
+                return 0.0
+            return len(payload) * 8.0 / el / 1e6
+        except Exception:
+            return 0.0
+
+    def deep_pool_test(self, pool: list, target: int = DEEP_TARGET) -> list:
+        """به ترتیبِ پینگ (کم‌پینگ‌تر اول) کاندیدها را تست عمیق می‌کند؛
+        به‌محض رسیدن به «target» نتیجه‌ی کامل، بقیه رها می‌شوند تا وقت تلف نشود.
+        خروجی: تاییدشده‌ها — مرتب به همان ترتیب پینگ."""
+        if not pool:
+            return []
+        done_evt = threading.Event()
+
+        def guarded(n):
+            if done_evt.is_set() or self.stop_flag.is_set():
+                return None
+            return self.deep_test(n)
+
+        verified = []
+        done = 0
+        ex = ThreadPoolExecutor(max_workers=DEEP_WORKERS)
+        try:
+            futs = {ex.submit(guarded, n): n for n in pool}
+            for f in as_completed(futs):
+                done += 1
+                r = f.result()
+                if r is not None:
+                    verified.append(r)
+                    self.log(f"✓ تست کامل: {r.display()} — پینگ {int(r.latency or 0)}ms • "
+                             f"دان {r.speed:.1f} • آپ {r.up_speed:.1f} Mbps • "
+                             f"باز شد: {r.extra.get('opened', '')}")
+                self.progress("deep", done, len(pool),
+                              f"تست عمیق کاندیدها {done}/{len(pool)} — {len(verified)} تایید شد")
+                if len(verified) >= target:
+                    done_evt.set()
+                    break
+        finally:
+            done_evt.set()
+            ex.shutdown(wait=False)
+        order = {id(n): i for i, n in enumerate(pool)}
+        verified.sort(key=lambda n: order.get(id(n), 10 ** 9))
+        return verified
+
     def measure_upload(self, seconds: float = 6.0) -> float:
-        """اندازه‌گیری سرعت آپلود از داخل تونل فعال (Mbps)."""
+        """اندازه‌گیری سرعت آپلود از داخل تونل فعال (Mbps) — بعد از اتصال نهایی."""
         if not self.proc:
             return 0.0
         port = self.http_port
@@ -1044,6 +1242,25 @@ class VpnEngine:
         lat_ok.sort(key=lambda n: n.latency)
         self.log(f"✓ پینگ تمام شد: {len(lat_ok)} کانفیگ سالم از {len(alive)}")
 
+        # ---- مرحله‌ی «تست عمیق»: با کم‌پینگ‌ترین‌ها، یوتوب/اینستاگرام/تلگرام ----
+        # واقعا باز می‌شوند + سرعت دانلود و آپلود واقعی هر کدام سنجیده می‌شود.
+        pool = lat_ok[:DEEP_POOL]
+        verified = self.deep_pool_test(pool, target=DEEP_TARGET)
+        if self.stop_flag.is_set():
+            return None, lat_ok
+        if verified:
+            self.log(f"✓ {len(verified)} کاندید سایت‌ها را باز کردند — بهترین از نظر سرعت انتخاب می‌شود")
+        else:
+            self.log("⚠ هیچ کاندیدی سایت‌ها را باز نکرد — روش قدیمی (تست سرعت ساده) ادامه می‌دهد")
+
+        if verified:
+            fast = [n for n in verified if n.speed >= MIN_GOOD_SPEED_MBPS]
+            cand = fast if fast else verified
+            # بهترین = بیشترین سرعت، بعد کم‌ترین پینگ (همه‌ی این‌ها کم‌پینگ‌ترین‌ها بودند)
+            best = max(cand, key=lambda n: (n.speed, -(n.latency or 0)))
+            return best, lat_ok
+
+        # fallback: هیچ کاندیدی تایید نشد → همان مسیر v1.3 (تست سرعت ساده)
         top = lat_ok[:TOP_SPEED_TESTS]
         rest = lat_ok[TOP_SPEED_TESTS:]
         if rest and EXTRA_SPEED_SAMPLES:
@@ -1081,6 +1298,9 @@ class VpnEngine:
             n = parse_uri(e.get("uri", ""))
             if n is not None:
                 n.speed = float(e.get("speed", 0) or 0)
+                n.up_speed = float(e.get("up_speed", 0) or 0)
+                if e.get("verified"):
+                    n.extra["verified"] = True
                 nodes.append(n)
         if not nodes:
             return None, []
@@ -1101,12 +1321,21 @@ class VpnEngine:
             return None, []
         lat_ok.sort(key=lambda n: n.latency)
         top = lat_ok[:3]
-        for n in top:
-            n.speed = self.test_speed(n)
-            if self.stop_flag.is_set():
-                return None, lat_ok
-        best = max(top, key=lambda n: (n.speed, -n.latency), default=None)
-        if best and best.speed >= QUICK_MIN_SPEED_MBPS:
+        # تست عمیق موازیِ سه کاندید برتر: سایت‌ها + دان + آپ — یک Xray برای هر کدام
+        ex = ThreadPoolExecutor(max_workers=3)
+        try:
+            futs = {ex.submit(self.deep_test, n): n for n in top}
+            for f in as_completed(futs):
+                f.result()
+        finally:
+            ex.shutdown(wait=False)
+        if self.stop_flag.is_set():
+            return None, lat_ok
+        ok = [n for n in top if n.extra.get("verified") and n.speed >= QUICK_MIN_SPEED_MBPS]
+        if ok:
+            best = max(ok, key=lambda n: (n.speed, -(n.latency or 0)))
+            self.log(f"★ بهترین حافظه: {best.display()} — دان {best.speed:.1f} • "
+                     f"آپ {best.up_speed:.1f} Mbps • {best.extra.get('opened', '')}")
             return best, lat_ok
         return None, lat_ok
 
@@ -1117,7 +1346,10 @@ class VpnEngine:
             if not n.uri or n.speed <= 0:
                 continue
             by_uri[n.uri] = {"uri": n.uri, "latency": int(n.latency or 0),
-                             "speed": round(n.speed, 2), "ts": time.time()}
+                             "speed": round(n.speed, 2),
+                             "up_speed": round(n.up_speed, 2),
+                             "verified": bool(n.extra.get("verified")),
+                             "ts": time.time()}
         entries = sorted(by_uri.values(), key=lambda e: -float(e.get("speed", 0)))
         save_cache(entries)
 

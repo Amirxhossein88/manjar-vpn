@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN v1.3 — رابط گرافیکی
-اسپلش انیمیشنی • کارت وضعیت • کارت سرور • کارت‌های آمار
-دکمه گرادیانی سفارشی (متن همیشه نمایان — رفع باگ CTk 6) • نگهبان سبک + تعمیر بی‌صدا
+ManjarVPN v1.4 — رابط گرافیکی
+اسپلش انیمیشنی • کارت وضعیت • کارت سرور (متن وسط‌چین) • کارت‌های آمار
+دکمه گرادیانی سفارشی (متن همیشه نمایان) • نگهبان سبک + تعمیر بی‌صدا
+پنل «سرورهای تست‌شده» داخل پنجره‌ی اصلی (بدون پنجره‌ی جدا — رفع لیست خالی/هنگ)
++ دکمه‌ی بستن مشخص (✕) و کلید Escape
+خروج بدون خطا با دکمه‌ی ضربدر — حتی وقتی پروسه‌های تست در جریان‌اند
+جریان اتصال: پینگ ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ← سرعت دانلود/آپلود ← بهترین
 """
 from __future__ import annotations
 
 import math
+import os
 import queue
 import re
 import threading
@@ -350,10 +355,14 @@ class App(ctk.CTk):
         self._eq_h = [6] * 6
         self._tick_i = 0
         self._report_open = False
+        self._servers_open = False
+        self._shutdown_thread: threading.Thread | None = None
         self._conn_lock = threading.Lock()       # فقط یک جریان اتصال در هر لحظه
         self._abort_repair = threading.Event()   # قطع دستی → تعمیر خودکار لغو شود
 
         self._build_ui()
+        # دکمه‌ی ضربدر باید از همان اول کار کند (حتی وسط اسپلش)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------------- UI ----------------
     def _build_ui(self):
@@ -391,30 +400,34 @@ class App(ctk.CTk):
         self.spinner = self._make_spinner(st)
         self.spinner.place(relx=0.06, rely=0.5, anchor="w")
 
-        # کارت سرور (قابل کلیک)
+        # کارت سرور (قابل کلیک) — متن وسط‌چین (رفع باگ چپ‌چین بودن)
         self.server_card = ctk.CTkFrame(self, fg_color=CARD, corner_radius=18,
                                         border_width=1, border_color=BORDER, cursor="hand2")
         self.server_card.grid(row=3, column=0, padx=20, pady=(0, 10), sticky="ew")
-        self.server_card.grid_columnconfigure(1, weight=1)
+        self.server_card.grid_columnconfigure(0, weight=0)
+        self.server_card.grid_columnconfigure(1, weight=1)   # ستون متن → کل عرض بین پرچم و شفرون
+        self.server_card.grid_columnconfigure(2, weight=0)
         self.sv_flag = ctk.CTkLabel(self.server_card, text="🌐",
                                     font=ctk.CTkFont(family=FONT, size=26), width=44)
         self.sv_flag.grid(row=0, column=0, padx=(16, 10), pady=12)
         svbox = ctk.CTkFrame(self.server_card, fg_color="transparent")
-        svbox.grid(row=0, column=1, sticky="w")
+        svbox.grid(row=0, column=1, sticky="ew")
         self.sv_name = ctk.CTkLabel(svbox, text="انتخاب خودکار بهترین سرور",
                                     font=ctk.CTkFont(family=FONT, size=15, weight="bold"),
-                                    text_color=TXT, anchor="e")
-        self.sv_name.pack(anchor="e")
+                                    text_color=TXT, anchor="center", justify="center")
+        self.sv_name.pack(anchor="center", fill="x")
         self.sv_sub = ctk.CTkLabel(svbox,
-                                   text=f"{len(SUBSCRIPTION_SOURCES)} منبع زنده • هزاران کانفیگ • تست پینگ و سرعت",
+                                   text=f"{len(SUBSCRIPTION_SOURCES)} منبع زنده • پینگ • "
+                                        f"یوتوب/اینستاگرام/تلگرام • سرعت دانلود/آپلود",
                                    font=ctk.CTkFont(family=FONT, size=12),
-                                   text_color=TXT_DIM, anchor="e")
-        self.sv_sub.pack(anchor="e")
-        ctk.CTkLabel(self.server_card, text="⌄", width=40,
-                     font=ctk.CTkFont(family=FONT, size=22),
-                     text_color=TXT_DIM).grid(row=0, column=2, padx=(8, 14))
-        for wdg in (self.server_card, self.sv_flag, self.sv_name, self.sv_sub):
-            wdg.bind("<Button-1>", lambda e: self._open_servers())
+                                   text_color=TXT_DIM, anchor="center", justify="center")
+        self.sv_sub.pack(anchor="center", fill="x")
+        self.chev_lbl = ctk.CTkLabel(self.server_card, text="⌄", width=40,
+                                     font=ctk.CTkFont(family=FONT, size=22),
+                                     text_color=TXT_DIM)
+        self.chev_lbl.grid(row=0, column=2, padx=(8, 14))
+        for wdg in (self.server_card, self.sv_flag, self.sv_name, self.sv_sub, self.chev_lbl):
+            wdg.bind("<Button-1>", lambda e: self._toggle_servers())
 
         # کارت‌های آمار
         stats = ctk.CTkFrame(self, fg_color="transparent")
@@ -469,6 +482,50 @@ class App(ctk.CTk):
         self.log_box.grid_remove()
         self._log(f"{APP_NAME} v{VERSION} آماده است.")
 
+        # ---- پنل «سرورهای تست‌شده» — داخل پنجره‌ی اصلی، بدون پنجره‌ی جدا ----
+        # (پنجره‌ی جدا CTkToplevel روی بعضی ویندوزها خالی/معلق می‌شد — رفع باگ «هیچی نمایش نمی‌دهد»)
+        # دکمه‌ی بستن مشخص (✕) + کلید Escape هم دارد.
+        self.servers_panel = ctk.CTkFrame(self, fg_color="#0f1430", corner_radius=14,
+                                          border_width=1, border_color=BORDER)
+        self.servers_panel.grid(row=9, column=0, padx=20, pady=(2, 14), sticky="nsew")
+        self.servers_panel.grid_remove()
+        phead = ctk.CTkFrame(self.servers_panel, fg_color="transparent")
+        phead.pack(fill="x", padx=12, pady=(10, 4))
+        ctk.CTkButton(phead, text="✕  بستن", width=88, height=28,
+                      corner_radius=9, fg_color=CARD_H, hover_color="#232c52",
+                      text_color=TXT,
+                      font=ctk.CTkFont(family=FONT, size=12, weight="bold"),
+                      command=self._toggle_servers).pack(side="left", padx=(4, 8))
+        ctk.CTkLabel(phead, text="سرورهای تست‌شده — برای اتصال انتخاب کنید",
+                     font=ctk.CTkFont(family=FONT, size=15, weight="bold"),
+                     text_color=TXT).pack(side="left", expand=True, fill="x")
+        wrap = tk.Frame(self.servers_panel, bg="#0f1430", highlightthickness=0)
+        wrap.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.servers_canvas = tk.Canvas(wrap, bg="#0f1430", highlightthickness=0, bd=0)
+        sb = tk.Scrollbar(wrap, orient="vertical", command=self.servers_canvas.yview,
+                          troughcolor="#0f1430", background=CARD_H, width=12)
+        self.servers_list_inner = tk.Frame(self.servers_canvas, bg="#0f1430")
+        self.servers_canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="left", fill="y")
+        self.servers_canvas.pack(side="right", fill="both", expand=True)
+        self._servers_win = self.servers_canvas.create_window(
+            (0, 0), window=self.servers_list_inner, anchor="nw")
+        self.servers_list_inner.bind(
+            "<Configure>", lambda e: self.servers_canvas.configure(
+                scrollregion=self.servers_canvas.bbox("all")))
+        self.servers_canvas.bind(
+            "<Configure>", lambda e: self.servers_canvas.itemconfigure(
+                self._servers_win, width=e.width))
+
+        def _wheel(e):
+            if self._servers_open:
+                try:
+                    self.servers_canvas.yview_scroll(int(-e.delta / 120), "units")
+                except Exception:
+                    pass
+        self.bind_all("<MouseWheel>", _wheel, add="+")
+        self.bind("<Escape>", lambda e: self._servers_open and self._toggle_servers())
+
     def _stat_card(self, parent, col, label, value, color):
         c = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=16,
                          border_width=1, border_color=BORDER)
@@ -518,7 +575,8 @@ class App(ctk.CTk):
             self.sv_flag.configure(text="🌐")
             self.sv_name.configure(text="انتخاب خودکار بهترین سرور")
             self.sv_sub.configure(
-                text=f"{len(SUBSCRIPTION_SOURCES)} منبع زنده • هزاران کانفیگ • تست پینگ و سرعت")
+                text=f"{len(SUBSCRIPTION_SOURCES)} منبع زنده • پینگ • "
+                     f"یوتوب/اینستاگرام/تلگرام • سرعت دانلود/آپلود")
             return
         self.sv_flag.configure(text=_flag_of(node.display()))
         self.sv_name.configure(text=node.display())
@@ -526,7 +584,11 @@ class App(ctk.CTk):
         if node.latency:
             bits.append(f"پینگ {int(node.latency)}ms")
         if node.speed:
-            bits.append(f"{node.speed:.1f}Mbps")
+            bits.append(f"دان {node.speed:.1f}Mbps")
+        if node.up_speed:
+            bits.append(f"آپ {node.up_speed:.1f}Mbps")
+        if node.extra.get("opened"):
+            bits.append(f"✓ {node.extra['opened']}")
         self.sv_sub.configure(text=" • ".join(bits) + f" • {node.server}:{node.port}")
 
     # ---------------- دکمه ----------------
@@ -600,7 +662,8 @@ class App(ctk.CTk):
                 if not nodes:
                     self.q.put(("error", "هیچ کانفیگی دریافت نشد — کمی بعد دوباره تلاش کنید."))
                     return
-                self.q.put(("log", f"✓ {len(nodes)} کانفیگ یکتا از {len(SUBSCRIPTION_SOURCES)} منبع — تست هوشمند"))
+                self.q.put(("log", f"✓ {len(nodes)} کانفیگ یکتا از {len(SUBSCRIPTION_SOURCES)} منبع — "
+                                   f"پینگ ← یوتوب/اینستاگرام/تلگرام ← سرعت دانلود/آپلود"))
                 best, ok_list = eng.scan(nodes)
                 if eng.stop_flag.is_set():
                     self.q.put(("idle", None)); return
@@ -621,11 +684,12 @@ class App(ctk.CTk):
                 self.q.put(("idle", None))
 
     def _rank(self, ok_list):
-        with_speed = [n for n in ok_list if n.speed > 0]
-        without = [n for n in ok_list if n.speed <= 0]
-        with_speed.sort(key=lambda n: -n.speed)
-        without.sort(key=lambda n: n.latency)
-        return with_speed + without
+        """تاییدشده‌ها (یوتوب/اینستا/تلگرام واقعا باز کردند) اول؛ بعد سرعت بیشتر؛ بعد پینگ کمتر."""
+        def vkey(n):
+            return (0 if n.extra.get("verified") else 1,
+                    -(n.speed if n.speed > 0 else 0.0),
+                    n.latency if n.latency else 9e9)
+        return sorted(ok_list, key=vkey)
 
     def _connect_with_fallback(self, best, extras=None):
         """به بهترین وصل می‌شود؛ اگر رد شد، سراغ کاندیدهای بعدی می‌رود."""
@@ -816,6 +880,7 @@ class App(ctk.CTk):
         self._update_server_card(node)
         self.stat_ping.configure(text=f"{int(node.latency or 0)} ms")
         self.stat_dl.configure(text=f"{node.speed:.1f} Mbps" if node.speed else "— Mbps")
+        self.stat_ul.configure(text=f"{node.up_speed:.1f} Mbps" if node.up_speed else "— Mbps")
         self.pill_lbl.configure(
             text=f"✓  پروکسی سیستم فعال  (HTTP: {self.engine.http_port} / SOCKS: {self.engine.socks_port})",
             text_color=GREEN)
@@ -858,6 +923,8 @@ class App(ctk.CTk):
                     self.stat_ul.configure(text=f"{payload:.1f} Mbps")
                 elif kind == "topnodes":
                     self.top_nodes = payload
+                    if self._servers_open:
+                        self._render_servers()      # لیست زنده — وسط تست هم پر می‌شود
                 elif kind == "repair":
                     self._on_repair(payload)
                 elif kind == "repaired":
@@ -885,9 +952,11 @@ class App(ctk.CTk):
         elif phase == "tcp":
             v = 0.12 + 0.15 * ratio
         elif phase == "latency":
-            v = 0.27 + 0.50 * ratio
+            v = 0.27 + 0.33 * ratio
+        elif phase == "deep":
+            v = 0.60 + 0.32 * ratio
         elif phase == "speed":
-            v = 0.77 + 0.18 * ratio
+            v = 0.92 + 0.03 * ratio
         elif phase == "connect":
             v = 0.95 + 0.05 * ratio
         else:
@@ -907,7 +976,9 @@ class App(ctk.CTk):
         self._update_server_card(node)
         self.stat_ping.configure(text=f"{int(node.latency or 0)} ms")
         self.stat_dl.configure(text=f"{node.speed:.1f} Mbps" if node.speed else "— Mbps")
-        self.stat_ul.configure(text="— Mbps")
+        self.stat_ul.configure(text=f"{node.up_speed:.1f} Mbps" if node.up_speed else "— Mbps")
+        if node.extra.get("opened"):
+            self._log(f"✓ با این سرور باز شد: {node.extra['opened']}")
         self.pill_lbl.configure(
             text=f"✓  پروکسی سیستم فعال  (HTTP: {self.engine.http_port} / SOCKS: {self.engine.socks_port})",
             text_color=GREEN)
@@ -929,39 +1000,58 @@ class App(ctk.CTk):
             self._bar_target = 0.0
             self.phase_lbl.configure(text="")
 
-    # ---------------- دیالوگ انتخاب سرور ----------------
-    def _open_servers(self):
-        if self.app_state == "busy":
-            return
-        dlg = ctk.CTkToplevel(self, fg_color=BG)
-        dlg.title("سرورهای تست‌شده")
-        dlg.geometry("560x480")
-        dlg.attributes("-topmost", True)
-        dlg.grid_columnconfigure(0, weight=1)
-        dlg.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(dlg, text="سرورهای تست‌شده — برای اتصال انتخاب کنید",
-                     font=ctk.CTkFont(family=FONT, size=16, weight="bold"),
-                     text_color=TXT).grid(row=0, column=0, pady=(14, 8))
-        box = ctk.CTkScrollableFrame(dlg, fg_color=CARD, corner_radius=14)
-        box.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+    # ---------------- پنل سرورهای تست‌شده (داخل پنجره اصلی) ----------------
+    def _toggle_servers(self):
+        self._servers_open = not self._servers_open
+        self.chev_lbl.configure(text="⌃" if self._servers_open else "⌄")
+        if self._servers_open and self._report_open:
+            self._report_open = False
+            self.log_box.grid_remove()
+            self.report_btn.configure(text="📄  نمایش گزارش اتصال")
+        if self._servers_open:
+            self._render_servers()
+            self.servers_panel.grid()
+        else:
+            self.servers_panel.grid_remove()
+        self.geometry("720x860" if (self._servers_open or self._report_open) else "720x560")
+
+    def _render_servers(self):
+        """لیست سرورها هر بار تازه ساخته می‌شود — حتی وسط تست (نتایج زنده پر می‌شوند)."""
+        for w in self.servers_list_inner.winfo_children():
+            w.destroy()
+        self.servers_canvas.yview_moveto(0)
         if not self.top_nodes:
-            ctk.CTkLabel(box, text="هنوز تستی انجام نشده — اول «اتصال خودکار» را بزنید.",
-                         text_color=TXT_DIM).pack(pady=20)
+            msg = ("تست در جریان است… به‌محض تایید هر سرور، همین‌جا نمایش داده می‌شود."
+                   if self.app_state == "busy"
+                   else "هنوز تستی انجام نشده — اول «اتصال خودکار» را بزنید.")
+            ctk.CTkLabel(self.servers_list_inner, text=msg,
+                         text_color=TXT_DIM,
+                         font=ctk.CTkFont(family=FONT, size=13)).pack(pady=24, padx=20)
+            return
         for n in self.top_nodes:
-            txt = f"{_flag_of(n.display())}  {n.display()}"
-            sub = f"{n.proto.upper()} • پینگ {int(n.latency or 0)}ms"
+            title = f"{_flag_of(n.display())}  {n.display()}"
+            bits = [n.proto.upper(), f"پینگ {int(n.latency or 0)}ms"]
             if n.speed:
-                sub += f" • {n.speed:.1f}Mbps"
-            rowb = ctk.CTkButton(box, text=f"{txt}\n{sub}", anchor="e", justify="right",
-                                 height=54, corner_radius=12, fg_color="#10162c",
-                                 hover_color=CARD_H, text_color=TXT,
-                                 font=ctk.CTkFont(family=FONT, size=13),
-                                 command=lambda nn=n: (dlg.destroy(), self._pick_server(nn)))
-            rowb.pack(fill="x", pady=4)
+                bits.append(f"دان {n.speed:.1f}Mbps")
+            if n.up_speed:
+                bits.append(f"آپ {n.up_speed:.1f}Mbps")
+            if n.extra.get("opened"):
+                bits.append(f"✓ {n.extra['opened']}")
+            ctk.CTkButton(self.servers_list_inner,
+                          text=f"{title}\n{' • '.join(bits)}",
+                          anchor="center",
+                          height=54, corner_radius=12,
+                          fg_color="#10162c", hover_color=CARD_H,
+                          text_color=TXT,
+                          font=ctk.CTkFont(family=FONT, size=13),
+                          command=lambda nn=n: self._pick_server(nn)).pack(
+                              fill="x", pady=4, padx=4)
 
     def _pick_server(self, node: Node):
         if self.app_state == "busy":
             return
+        if self._servers_open:
+            self._toggle_servers()
         self.engine.stop_flag.clear()
         self._fail_attempts = 0
         self._abort_repair.clear()
@@ -1012,14 +1102,17 @@ class App(ctk.CTk):
     # ---------------- گزارش ----------------
     def _toggle_report(self):
         self._report_open = not self._report_open
+        if self._report_open and self._servers_open:
+            self._servers_open = False
+            self.servers_panel.grid_remove()
+            self.chev_lbl.configure(text="⌄")
         if self._report_open:
             self.log_box.grid()
-            self.geometry("720x860")
             self.report_btn.configure(text="📄  بستن گزارش اتصال")
         else:
             self.log_box.grid_remove()
-            self.geometry("720x560")
             self.report_btn.configure(text="📄  نمایش گزارش اتصال")
+        self.geometry("720x860" if (self._servers_open or self._report_open) else "720x560")
 
     # ---------------- حلقه انیمیشن ----------------
     def _ui_tick(self):
@@ -1093,7 +1186,6 @@ class App(ctk.CTk):
             if a < 1.0:
                 self.after(18, lambda: fade(a))
         fade()
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._poll)
         self.after(50, self._ui_tick)
         self.app_state = "idle"
@@ -1107,19 +1199,54 @@ class App(ctk.CTk):
 
     # ---------------- خروج ----------------
     def _on_close(self):
+        """دکمه‌ی ضربدر — همیشه سریع بسته می‌شود؛ حتی وقتی تست/اتصال در جریان است.
+        (باگ قبلی: کشتن ده‌ها پروسه‌ی Xray روی تردِ رابط انجام می‌شد و پنجره معلق می‌شد.)"""
+        if self._closing:
+            return
         self._closing = True
         self._abort_repair.set()
+        try:
+            self.engine.stop_flag.set()
+        except Exception:
+            pass
+        # پروکسی سیستم + Xray اصلی — سریع است و همین‌جا انجام می‌شود تا هیچ‌وقت پروکسی روشن نماند
+        try:
+            self.engine.disconnect()
+        except Exception:
+            pass
+        self.withdraw()          # پنجره فورا از دید خارج می‌شود
+        self._shutdown_thread = threading.Thread(
+            target=self._shutdown_worker, daemon=True)
+        self._shutdown_thread.start()
+        self.after(80, self._finish_exit)
+
+    def _shutdown_worker(self):
+        """پروسه‌های تست در ترد جدا بسته می‌شوند تا رابط هیچ‌وقت هنگ نکند."""
         try:
             self.engine.stop_all()
         except Exception:
             pass
-        self.destroy()
+
+    def _finish_exit(self):
+        try:
+            self.destroy()
+        except Exception:
+            pass
 
 
 def main():
     app = App()
     app.start_with_splash()
     app.mainloop()
+    # خروج تمیز: اگر پروسه‌های تست هنوز در حال بسته‌شدن‌اند، حداکثر ۶ ثانیه فرصت
+    try:
+        t = getattr(app, "_shutdown_thread", None)
+        if t is not None:
+            t.join(timeout=6)
+        app.engine.disconnect()
+    except Exception:
+        pass
+    os._exit(0)          # همه‌ی ترد‌های daemon بلافاصله تمام — بدون فرایند رها
 
 
 if __name__ == "__main__":

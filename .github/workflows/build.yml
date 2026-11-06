@@ -3,6 +3,7 @@ name: Build ManjarVPN (Windows exe)
 on:
   push:
     branches: [ main, master ]
+    tags: [ "v*" ]        # پوش تگ → بیلد + ساخت خودکار Release با exe
   workflow_dispatch:
 
 permissions:
