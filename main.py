@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN v1.5 — رابط گرافیکی
+ManjarVPN v1.7 — رابط گرافیکی
 اسپلش انیمیشنی • کارت وضعیت • کارت سرور (متن وسط‌چین) • کارت‌های آمار
 دکمه گرادیانی سفارشی (متن همیشه نمایان) • نگهبان سبک + تعمیر بی‌صدا
-پنل «سرورهای تست‌شده» داخل پنجره‌ی اصلی (بدون پنجره‌ی جدا — رفع لیست خالی/هنگ)
-+ دکمه‌ی بستن مشخص (✕) و کلید Escape
+پنل «سرورهای تست‌شده» داخل پنجره‌ی اصلی + دکمه‌ی بستن مشخص (✕) و کلید Escape
 خروج بدون خطا با دکمه‌ی ضربدر — حتی وقتی پروسه‌های تست در جریان‌اند
-جریان اتصال: پینگ ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ← سرعتِ پایدار دانلود/آپلود ← بهترین
-نگهبانِ جدید: اگر سرعت تونل چند نمونه‌ی متوالی عملاً صفر باشد (نودِ فقط‌پینگی)
-→ تعویض بی‌صدای سرور، بدون دخالت کاربر
-نجات هوشمند (v1.6): اگر هیچ سروری جواب نداد، برنامه وضعیت را در یک پرامت
-خلاصه می‌کند، از هوش مصنوعی کانفیگ تازه می‌گیرد، کامل تستش می‌کند و وصل می‌شود
-(این کانفیگ‌ها موقت‌اند — در حافظه‌ی سرورهای خوب ذخیره نمی‌شوند)
+جریان اتصال: پینگ (با تلاشِ مجدد) ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ←
+سرعتِ پایدار دانلود/آپلود (۴ اندپوینتِ مستقل) ← بهترین — و حالتِ اضطراری:
+اگر هیچ کاندیدی سرعتِ تأییدشده نداشت، به کم‌پینگ‌ترینِ سالم‌ها وصل می‌شود
+(دیگر پیامِ بن‌بستِ «هیچ‌کدام کار نمی‌کند» وجود ندارد) + گزارشِ قیفِ تست با دلیلِ رد
+سوییچِ «نجات با هوش مصنوعی» (پیش‌فرض خاموش، ماندگار در prefs.json)
 """
 from __future__ import annotations
 
@@ -30,6 +28,7 @@ from engine import (APP_NAME, VERSION, VpnEngine, Node, SESSION,
                     LIVE_MIN_SPEED_MBPS, LIVE_SLOW_LIMIT, AI_RESCUE_ENABLED,
                     SUBSCRIPTION_SOURCES, cleanup_stale_proxy,
                     decode_subscription, filter_supported, find_logo,
+                    load_my_configs, load_prefs, save_prefs,
                     parse_uri)
 
 try:
@@ -366,6 +365,7 @@ class App(ctk.CTk):
         self._shutdown_thread: threading.Thread | None = None
         self._conn_lock = threading.Lock()       # فقط یک جریان اتصال در هر لحظه
         self._abort_repair = threading.Event()   # قطع دستی → تعمیر خودکار لغو شود
+        self._ai_rescue_on = bool(load_prefs().get("ai_rescue", False))   # v1.7: سوییچِ ماندگار
 
         self._build_ui()
         # دکمه‌ی ضربدر باید از همان اول کار کند (حتی وسط اسپلش)
@@ -481,6 +481,15 @@ class App(ctk.CTk):
                       width=130, height=28, fg_color="transparent", hover_color=CARD,
                       text_color=TXT_DIM, font=ctk.CTkFont(family=FONT, size=12)
                       ).pack(side="left", padx=8)
+        # v1.7 — سوییچِ «نجات با هوش مصنوعی»: پیش‌فرض خاموش، انتخابِ کاربر ماندگار است
+        self.ai_switch = ctk.CTkSwitch(links, text="🤖 نجات با AI",
+                                       command=self._on_ai_toggle,
+                                       progress_color=VIOLET, width=110,
+                                       font=ctk.CTkFont(family=FONT, size=12),
+                                       text_color=TXT_DIM)
+        self.ai_switch.pack(side="left", padx=(4, 8))
+        if self._ai_rescue_on:
+            self.ai_switch.select()
 
         # گزارش (لاگ) — پیش‌فرض مخفی
         self.log_box = ctk.CTkTextbox(self, fg_color="#080b18", text_color="#9fb0c8",
@@ -569,6 +578,13 @@ class App(ctk.CTk):
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 
+    def _on_ai_toggle(self):
+        """سوییچِ نجاتِ هوشمند — انتخابِ کاربر در prefs.json ماندگار می‌شود."""
+        self._ai_rescue_on = bool(self.ai_switch.get())
+        save_prefs(ai_rescue=self._ai_rescue_on)
+        self._log("🤖 نجات با هوش مصنوعی " + ("فعال شد — فقط وقتی هیچ سروری جواب ندهد استفاده می‌شود"
+                                              if self._ai_rescue_on else "خاموش شد"))
+
     def _set_status(self, text, color, bold_color=None):
         self.status_var.set(text)
         self._dot_color = color
@@ -646,6 +662,7 @@ class App(ctk.CTk):
                     self.q.put(("error", "اتصال اینترنت پیدا نشد! وای‌فای یا کابل را چک کنید."))
                     return
                 self.q.put(("log", f"✓ اینترنت برقرار (پینگ مستقیم {lat}ms)"))
+                eng.check_test_rig()      # v1.7: سلامتِ ابزارِ تست — فقط لاگ، تصمیم نمی‌گیرد
 
                 # مسیر سریع: سرورهای خوب قبلی (با کاندیدهای جایگزین)
                 best, quick_ok = eng.quick_connect_check()
@@ -662,10 +679,15 @@ class App(ctk.CTk):
                     return
 
                 # مسیر کامل
+                # v1.7: کانفیگ‌های شخصیِ my_configs.txt همیشه اولِ صفِ تست‌اند
+                my_nodes = load_my_configs()
+                if my_nodes:
+                    self.q.put(("log", f"★ {len(my_nodes)} کانفیگ شخصی از my_configs.txt — اول این‌ها تست می‌شوند"))
                 self.q.put(("status", ("دریافت کانفیگ‌های رایگان دنیا…", AMBER)))
                 nodes = eng.fetch_all()
                 if eng.stop_flag.is_set():
                     self.q.put(("idle", None)); return
+                nodes = my_nodes + nodes
                 if not nodes:
                     self.q.put(("error", "هیچ کانفیگی دریافت نشد — کمی بعد دوباره تلاش کنید."))
                     return
@@ -675,8 +697,8 @@ class App(ctk.CTk):
                 if eng.stop_flag.is_set():
                     self.q.put(("idle", None)); return
                 if best is None:
-                    # ===== نجات هوشمند (v1.6): کانفیگ تازه از هوش مصنوعی =====
-                    if AI_RESCUE_ENABLED and self._ai_rescue_used < 2:
+                    # ===== نجات هوشمند: فقط با سوییچِ کاربر (v1.7: پیش‌فرض خاموش) =====
+                    if AI_RESCUE_ENABLED and self._ai_rescue_on and self._ai_rescue_used < 2:
                         self._ai_rescue_used += 1
                         st = dict(eng.scan_stats)
                         diag = {
@@ -685,6 +707,7 @@ class App(ctk.CTk):
                             "latency_ok": st.get("latency_ok", len(ok_list)),
                             "verified": st.get("verified", 0),
                             "usable": st.get("usable", 0),
+                            "reasons": st.get("reasons") or {},
                             "direct_ok": True,
                         }
                         self.q.put(("status", ("هیچ سروری جواب نداد — کانفیگ تازه از هوش مصنوعی…", AMBER)))
@@ -705,8 +728,18 @@ class App(ctk.CTk):
                                 self.q.put(("connected", actual))
                                 return
                         self.q.put(("log", "✗ کانفیگ‌های هوش مصنوعی هم جواب نداد"))
-                    self.q.put(("error", "هیچ کانفیگی هم پینگ و هم سرعتِ واقعی نداشت — حتی کانفیگ‌های تازه‌ی "
-                                         "هوش مصنوعی جواب نداد. چند دقیقه دیگر دوباره تلاش کنید."))
+                    # v1.7 — پیامِ نهایی با گزارشِ کاملِ قیف: دقیقاً کجا رد شدند؟
+                    st = dict(eng.scan_stats or {})
+                    rs = st.get("reasons") or {}
+                    rs_txt = "، ".join(f"{k}={v}" for k, v in sorted(rs.items(), key=lambda x: -x[1])[:4])
+                    msg = (f"هیچ تونلِ پاسخ‌گویی پیدا نشد — قیفِ تست: "
+                           f"دریافت {st.get('fetched', 0)} ← زنده {st.get('tcp_alive', 0)} ← "
+                           f"پینگ {st.get('latency_ok', 0)} ← سایت {st.get('site_ok', 0)} ← "
+                           f"سرعتِ تأیید {st.get('verified', 0)}")
+                    if rs_txt:
+                        msg += f" (دلایلِ رد: {rs_txt})"
+                    msg += " — اگر سرور شخصی دارید، در فایل my_configs.txt (پوشه‌ی ManjarVPN در APPDATA) بگذارید."
+                    self.q.put(("error", msg))
                     return
                 ranked = self._rank(ok_list)
                 self.q.put(("topnodes", ranked[:12]))

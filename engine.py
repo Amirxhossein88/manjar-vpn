@@ -1,26 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine v1.6
+ManjarVPN Engine v1.7
 =====================
-جدید در v1.6 — «نجات هوشمند»:
-  اگر هیچ سروری جواب نداد، برنامه خودش وضعیت را در یک پرامت خلاصه می‌کند، به یک
-  هوش مصنوعی می‌دهد (پیش‌فرض: سرویس رایگان Pollinations بدون کلید؛ یا endpoint
-  شخصیِ سازگار با OpenAI) و کانفیگ‌های تازه‌اش را می‌گیرد، کامل تست می‌کند و
-  وصل می‌شود. این کانفیگ‌ها «موقت»‌اند: در حافظه‌ی سرورهای خوب ذخیره نمی‌شوند.
-  + ۷ منبع کانفیگ تازه (۳۷ منبع) + دور دوم/سوم تست عمیق وقتی دور اول هیچی پیدا نکرد.
-مهم‌ترین تغییر v1.5: «اتصال فقط وقتی مجاز است که سرعت واقعی هم داشته باشد».
-نودِ «فقط‌پینگی» در هر چهار مرحله رد می‌شود:
-  ۱) تست عمیق: سرعتِ «پایدار» (۳ دانلود موازی مثل مرورگر، بدون یک‌وَک اولیه) زیر حداقل → رد
+مشکلِ نسخه‌ی قبل: برنامه می‌گفت «هیچ سروری کار نمی‌کند» در حالی که اکثر سرورها سالم بودند —
+خودِ «قیفِ تست» همه‌چیز را رد می‌کرد. v1.7 قیف را از پایه درست می‌کند:
+
+  ۱) «باز شدن سایت» یعنی «هر پاسخ HTTP» — حتی ۴۰۳/۴۲۹ (اینستاگرام به IP دیتاسنتر
+     ۴۰۳ می‌دهد ولی همین پاسخ هم یعنی تونل TLS تا مقصد می‌رسد؛ قبلاً ردِ کاذب بود)
+  ۲) سرعت از ۴ اندپوینتِ مستقل (کلادفلر + گوگل + هتزنر + OVH) سنجیده می‌شود؛
+     کانفیگ‌هایی که از پشتِ کلادفلر خارج می‌شوند speed.cloudflare.com را
+     ۴۰۳/۴۲۹ می‌گیرند — قبلاً این یعنی «سرعت صفر» و رد؛ حالا اندپوینت بعدی
+     امتحان می‌شود و بهترین اندازه ملاک است (دروازه‌ی اتصال و نگهبان هم همین‌طور)
+  ۳) همزمانیِ تست پینگ ۴۸ → ۱۴ (۴۸ Xrayِ همزمان روی لینک ایرانی خودش تایم‌اوت می‌سازد)
+     + ردهایِ پینگ یک بار دیگر امتحان می‌شوند
+  ۴) «هیچ‌کدام کار نمی‌کند» دیگر بن‌بست نیست: اگر هیچ کاندیدی سرعتِ تأییدشده نداشت،
+     برنامه به کم‌پینگ‌ترینِ سالم‌ها وصل می‌شود (حالت اضطراری، دروازه‌ی شُل‌تر) و
+     نگهبانِ سرعت اگر عملاً بی‌سرعت بود خودش عوضش می‌کند
+  ۵) گزارشِ «قیف» با دلیلِ رد در هر مرحله: دریافت ← زنده ← پینگ ← سایت ← سرعت
+     (+ دلایل: 403، تایم‌اوت، کم‌سرعت …) — دیگر نمی‌شود نپرسید «کجا رد شدند؟»
+  ۶) تستِ سلامتِ ابزارِ تست قبل از اسکن + فایلِ کانفیگِ شخصی (my_configs.txt)
+  ۷) «نجات با هوش مصنوعی» دیگر خودکار نیست — سوییچ در رابط (پیش‌فرض خاموش):
+     مدلِ زبانی کانفیگِ زنده نمی‌شناسد و اکثراً UUID ساختگی می‌دهد؛ تصمیمِ نهایی
+     را تستِ واقعی می‌گیرد، نه مدل
+
+از v1.5 حفظ شد: سرعت شرطِ اتصال است و نودِ «فقط‌پینگی» در چهار لایه لو می‌رود:
+  ۱) تست عمیق: سرعتِ «پایدار» (۳ دانلود موازی، بدون یک‌وَک اولیه) زیر حداقل → رد
   ۲) اسکن: هیچ کاندیدِ بدونِ حداقلِ سرعت انتخاب نمی‌شود
   ۳) دروازه‌ی اتصال: قبل از روشن‌کردن پروکسی سیستم، سرعت تونل سنجیده می‌شود
   ۴) نگهبان: اگر سرعت تونل چند نمونه‌ی متوالی عملاً صفر باشد → تعویض بی‌صدای سرور
-موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۳۷ منبع زنده، پیش‌فیلتر TCP،
-تست پینگ، سپس «تست عمیق» هر کاندید با یک هسته Xray: باز کردن واقعی
-یوتوب / اینستاگرام / تلگرام از داخل همان تونل + تست سرعت واقعی دانلود و آپلود،
-و در پایان اتصال به سروری که هم پینگ و هم سرعت بهتری دارد و سایت‌ها را واقعا باز کرده،
-حافظه‌ی سرورهای خوب قبلی (اتصال مجدد در چند ثانیه)،
-انتخاب بهترین کانفیگ و اتصال + پروکسی سیستم ویندوز،
-نگهبان اتصال با چک سبک + تعمیر بی‌صدا (بدون قطع‌های کاذب).
+موتور: دریافت موازی کانفیگ‌ها از ۳۹ منبع زنده، پیش‌فیلتر TCP، تست پینگ،
+«تست عمیق» هر کاندید با یک هسته Xray: باز کردن واقعی یوتوب/اینستاگرام/تلگرام
+از داخل همان تونل + سرعت واقعی دانلود/آپلود، حافظه‌ی سرورهای خوب،
+انتخاب بهترین + پروکسی سیستم ویندوز + نگهبان با تعمیر بی‌صدا.
 """
 from __future__ import annotations
 
@@ -45,14 +56,15 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 # ============================ تنظیمات قابل تغییر ============================
-MAX_TEST_NODES = 1200         # حداکثر کانفیگ برای پیش‌فیلتر TCP (v1.6: ۸۰۰ → ۱۲۰۰)
+MAX_TEST_NODES = 1200         # حداکثر کانفیگ برای پیش‌فیلتر TCP
 TCP_PREFILTER_WORKERS = 200   # اتصال‌های همزمان TCP (خیلی سبک است)
-TCP_PREFILTER_TIMEOUT = 1.5   # ثانیه
-MAX_XRAY_LATENCY_TESTS = 380  # بعد از پیش‌فیلتر، حداکثر تست پینگ واقعی
-CONCURRENT_TESTS = 48         # تست‌های پینگ همزمان
+TCP_PREFILTER_TIMEOUT = 2.0   # v1.7: ۱.۵ → ۲ ثانیه (تایم‌اوتِ کوتاه = ردِ کاذب روی لینک شلوغ)
+MAX_XRAY_LATENCY_TESTS = 320  # بعد از پیش‌فیلتر، حداکثر تست پینگ واقعی
+CONCURRENT_TESTS = 14         # v1.7: ۴۸ → ۱۴ (۴۸ Xrayِ همزمان روی لینک ایرانی خودش تایم‌اوت می‌سازد)
+LATENCY_RETRY_MAX = 80        # v1.7: ردهایِ پینگ یک بار دیگر امتحان می‌شوند (سقف)
 TOP_SPEED_TESTS = 8           # بهترین‌های پینگ برای تست سرعت
 EXTRA_SPEED_SAMPLES = 3       # + چند نمونه تصادفی سالم برای تنوع
 CONCURRENT_SPEED_TESTS = 6
@@ -66,22 +78,30 @@ MIN_GOOD_SPEED_MBPS = 2.0     # حداقل سرعتِ «خوب» (یوتوب/ا�
 MIN_USABLE_SPEED_MBPS = 0.6   # کفِ مطلق — زیرِ این تونل عملاً بی‌استفاده است و رد می‌شود
 CONNECT_GATE_MBPS = 1.0       # دروازه‌ی اتصال نهایی: قبل از فعال‌شدن پروکسی سیستم سنجیده می‌شود
 
+EMERGENCY_GATE_MBPS = 0.3     # v1.7: دروازه در «حالت اضطراری» — وصل‌شدنِ ضعیف بهتر از بی‌اتصالی
+
 # نگهبان اتصال (main.py): «فقط‌پینگی» را وسط کار هم می‌گیرد
 LIVE_MIN_SPEED_MBPS = 0.5     # نمونه‌ی سرعت زیر این = تونل عملاً مرده
 LIVE_SLOW_LIMIT = 3           # چند نمونه‌ی متوالی مرده → تعویض بی‌صدای سرور
 
 # ===== تست سرعتِ «پایدار» مثل مرورگر واقعی =====
-# قبلاً: یک اتصال تکی که بعد از ۳۰۰KB با سرعتِ بالای ۱۲ قطع می‌شد → «سرعتِ شروع» را می‌داد نه سرعتِ واقعی.
-# حالا: ۳ دانلودِ موازی از CDNهای متفاوت، ۶ ثانیه، و سرعت فقط از ثانیه‌ی ۱.۵ به بعد حساب می‌شود
-# تا اثر slow-start حذف شود. نودهایی که بعد از چند کیلوبایت برش می‌زنند اینجا لو می‌روند.
+# ۳ دانلودِ موازی، ۶ ثانیه، سرعت فقط از ثانیه‌ی ۱.۵ به بعد — تا اثر slow-start حذف شود.
+# v1.7 — چهار اندپوینتِ مستقل (کلادفلر + گوگل + هتزنر + OVH، سه CDN جدا):
+# کانفیگ‌های پشتِ کلادفلر (اکثر کانفیگ‌های ws رایگان!) از speed.cloudflare.com
+# خیلی وقت‌ها ۴۰۳/۴۲۹ می‌گیرند — قبلاً این یعنی «سرعت صفر» و ردِ کاذبِ همه‌چیز.
+# حالا اگر اندپوینتی هیچ داده‌ای نداد، اندپوینتِ بعدی امتحان می‌شود (تا ۲ اندپوینت).
 SUSTAIN_SECONDS = 6.0         # مدت تست
 SUSTAIN_WARMUP = 1.5          # یک‌وَک اولیه از محاسبه حذف می‌شود
-SUSTAIN_ENDPOINTS = [
-    "https://speed.cloudflare.com/__down?bytes=25000000",
+SPEED_ENDPOINTS = [
     "https://speed.cloudflare.com/__down?bytes=25000000",
     # فایل بزرگ از CDN گوگل — همان خانواده‌ی لبه‌هایی که ترافیک یوتوب از آن رد می‌شود
     "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
+    "https://nbg1-speed.hetzner.com/100MB.bin",
+    "https://proof.ovh.net/files/100Mb.dat",
 ]
+SPEED_ENDPOINT_ATTEMPTS = 2   # حداکثر چند اندپوینت برای هر نود امتحان شود
+SPEED_MIN_VALID_BYTES = 150_000  # کمتر از این در ۶ ثانیه = اندپوینت/تونل مشکوک → اندپوینتِ بعدی
+SUSTAIN_ENDPOINTS = SPEED_ENDPOINTS   # سازگاری با نامِ قدیمی
 # تست واقعی: علاوه بر 204، یک سایت واقعی TLS هم باید باز شود (ضد «وصل شد ولی کار نمی‌کند»)
 REAL_SITE_URL = "https://www.wikipedia.org/static/favicon/wikipedia.ico"
 UPLOAD_TEST_URL = "https://speed.cloudflare.com/__up"
@@ -99,9 +119,9 @@ SITE_TARGETS = [
 ]
 SITE_MIN_PASS = 2             # حداقل چند سایت از ۳ باید باز شود تا کاندید تایید شود
 DEEP_POOL = 40                # کم‌پینگ‌ترین‌ها که تست عمیق می‌شوند
-DEEP_ROUNDS = 3               # v1.6: اگر دور اول هیچ کاندیدی تایید نکرد، ۴۰ تای بعدی هم تست می‌شوند (تا ۳ دور)
+DEEP_ROUNDS = 3               # اگر دور اول هیچ کاندیدی تایید نکرد، ۴۰ تای بعدی هم تست می‌شوند (تا ۳ دور)
 DEEP_TARGET = 12              # به‌محض این تعداد نتیجه‌ی کامل، بقیه رها می‌شوند
-DEEP_WORKERS = 3              # چند کاندید همزمان تست عمیق شوند (کمتر = اعداد تمیزتر)
+DEEP_WORKERS = 4              # چند کاندید همزمان تست عمیق شوند (v1.7: ۳ → ۴ — همزمانیِ پینگ کم شد، اینجا می‌شود بیشتر)
 SITE_TIMEOUT = 6              # ثانیه برای هر سایت
 UPLOAD_PROBE_BYTES = 400_000  # حجم نمونه آپلود هر کاندید
 
@@ -126,7 +146,7 @@ XRAY_HTTP_PORT = 10809
 UA = {"User-Agent": f"{APP_NAME}/{VERSION}"}
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# ============================ منابع کانفیگ (۳۷ منبع زنده) ============================
+# ============================ منابع کانفیگ (۳۹ منبع زنده) ============================
 SUBSCRIPTION_SOURCES = [
     # barry-far — دسته‌های اصلی
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
@@ -171,6 +191,9 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/Alirewa/V2ray-Configs/main/config.txt",
     "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/base64/all_sub.txt",
     "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge_base64.txt",
+    # ===== v1.7 — منابع فعال تازه (تست‌شده؛ ۳۷ منبع قبلی هم همگی زنده‌اند) =====
+    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector/main/sub/mix",
+    "https://raw.githubusercontent.com/freefq/free/master/v2",
 ]
 
 MIRROR_TEMPLATES = [
@@ -195,10 +218,12 @@ MODERN_SS_METHODS = {
 }
 
 
-# ============================ نجاتِ هوشمند (v1.6) ============================
+# ============================ نجاتِ هوشمند (v1.6 / پیش‌فرضِ خاموش از v1.7) ============
 # اگر هیچ سروری جواب نداد، برنامه وضعیت را در یک پرامت خلاصه می‌کند، به یک
 # هوش مصنوعی می‌دهد و کانفیگ‌های تازه‌اش را می‌گیرد، کامل تست می‌کند و وصل می‌شود.
 # این کانفیگ‌ها «موقت»‌اند: extra["ai"]=True → در حافظه‌ی سرورهای خوب ذخیره نمی‌شوند.
+# v1.7: این ثابت یعنی «قابلیت در دسترس است»؛ خاموش/روشنِ هر نشست با سوییچِ رابط کاربر
+# تعیین می‌شود و در prefs.json ماندگار است (پیش‌فرضِ اولیه: خاموش).
 AI_RESCUE_ENABLED = True
 AI_RESCUE_MAX_ROUNDS = 2          # چند دور از هوش مصنوعی بپرسیم (پرامتِ هر دور کمی متفاوت است)
 AI_RESCUE_MAX_URIS = 60           # سقف کانفیگ استخراجی از هر پاسخ
@@ -239,6 +264,12 @@ def build_rescue_prompt(diag: dict, round_no: int = 0) -> str:
         f"- {diag.get('fetched', '?')} configs fetched from public aggregator feeds, "
         f"{diag.get('tcp_alive', '?')} reachable by TCP, {diag.get('latency_ok', '?')} passed ping, "
         f"{diag.get('verified', '?')} opened real sites, {diag.get('usable', '?')} had usable download speed.",
+    ]
+    reasons = diag.get("reasons") or {}
+    if reasons:
+        rs = ", ".join(f"{k}={v}" for k, v in list(reasons.items())[:5])
+        lines.append(f"- Speed-test rejection reasons: {rs}.")
+    lines += [
         "- The public subscription feeds it reads were all stale or dead today.",
         "",
         "Please reply with:",
@@ -254,6 +285,75 @@ def build_rescue_prompt(diag: dict, round_no: int = 0) -> str:
         "Output format: one item per line (URLs and URIs mixed). No explanations, no markdown, no code fences.",
     ]
     return "\n".join(lines)
+
+
+# ============================ تنظیماتِ برنامه (سوییچ‌های رابط) ============================
+def load_prefs() -> dict:
+    """تنظیماتِ سبکِ برنامه (مثل وضعیت سوییچ هوش مصنوعی) — prefs.json در پوشه‌ی کش."""
+    try:
+        with open(os.path.join(_cache_dir(), "prefs.json"), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_prefs(**kw):
+    try:
+        d = load_prefs()
+        d.update(kw)
+        with open(os.path.join(_cache_dir(), "prefs.json"), "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+# ============================ کانفیگِ شخصیِ کاربر (v1.7) ============================
+MY_CONFIGS_FILE = "my_configs.txt"   # %APPDATA%/ManjarVPN/my_configs.txt
+
+
+def load_my_configs(max_nodes: int = 100) -> list:
+    """فایلِ شخصیِ کاربر: هر خط یک کانفیگ (vless://…) یا یک لینک اشتراک (http…).
+    # = توضیح. این کانفیگ‌ها همیشه تست می‌شوند و هرگز حذفِ نمونه‌گیری نمی‌شوند.
+    پایدارترین مسیر: کانفیگِ سرورِ شخصی (اگر VPS دارید) اینجا بگذارید."""
+    path = os.path.join(_cache_dir(), MY_CONFIGS_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [l.strip() for l in f.read().splitlines()
+                     if l.strip() and not l.strip().startswith("#")]
+    except Exception:
+        return []
+    if not lines:
+        return []
+    uris = []
+    for l in lines:
+        if l.lower().startswith(("http://", "https://")):
+            txt = fetch_text(l)
+            if txt:
+                uris.extend(decode_subscription(txt)[:500])
+        else:
+            uris.append(l)
+    nodes = []
+    for u in uris[:max_nodes * 4]:
+        n = parse_uri(u)
+        if n is not None:
+            n.extra["my"] = True
+            nodes.append(n)
+        if len(nodes) >= max_nodes:
+            break
+    return filter_supported(nodes)
+
+
+def fetch_text(url: str, timeout: float = 12) -> str | None:
+    """دانلود یک URL با آینه‌های گیت‌هاب (ماژول‌سطح — برای فایلِ شخصی هم استفاده می‌شود)."""
+    for tpl in MIRROR_TEMPLATES:
+        try:
+            r = SESSION.get(tpl.format(url=url), timeout=timeout)
+            if r.status_code == 200 and r.text.strip():
+                return r.text
+        except Exception:
+            continue
+    return None
 
 
 def extract_uris_from_ai(text: str, max_uris: int = AI_RESCUE_MAX_URIS) -> tuple:
@@ -870,8 +970,11 @@ class VpnEngine:
         self.test_procs_lock = threading.Lock()
         self._port_counter = itertools.count(1)
         self._port_lock = threading.Lock()
-        self.scan_stats: dict = {}          # آمار آخرین اسکن — برای پرامتِ نجات هوشمند
+        self.scan_stats: dict = {}          # آمار آخرین اسکن — برای گزارشِ قیف و پرامتِ نجات
         self._features_logged = False
+        self._ep_cursor = 0                 # v1.7: چرخشِ اندپوینتِ سرعت بین نودها (پخشِ بار)
+        self._gate_ep: str | None = None    # v1.7: اندپوینتِ سالمِ اتصالِ فعلی (کشِ دروازه/نگهبان)
+        self._last_sites_detail = ""        # آخرین جزئیاتِ بازشدن سایت‌ها (برای گزارشِ دلیل رد)
 
     # ---------- callbacks ----------
     def log(self, msg: str):
@@ -944,6 +1047,44 @@ class VpnEngine:
                 continue
         return False, None
 
+    # ---------- سلامتِ ابزارِ تست (v1.7) ----------
+    def check_test_rig(self) -> dict:
+        """قبل از اسکن، اندپوینت‌های سرعت را «مستقیم» (بدون تونل) یک بار چک می‌کند.
+        اگر خودِ شبکه به اندپوینت‌ها نرسد، اعدادِ داخلِ تونل هم مشکوک‌اند و باید دیده شود.
+        خروجی: {url: "200، 300KB، ۸۰۰ms" یا نامِ خطا} — فقط لاگ می‌شود، تصمیم نمی‌گیرد."""
+        out = {}
+
+        def probe(url: str) -> str:
+            try:
+                t0 = time.time()
+                hdrs = dict(SESSION.headers)
+                if "speed.cloudflare.com" in url:
+                    u = "https://speed.cloudflare.com/__down?bytes=300000"
+                else:
+                    u = url
+                    hdrs["Range"] = "bytes=0-299999"
+                with SESSION.get(u, stream=True, timeout=(3, 5), headers=hdrs) as r:
+                    first = next(r.iter_content(65536), b"")
+                    ms = int((time.time() - t0) * 1000)
+                    if first:
+                        return f"{r.status_code}، {len(first) // 1024}KB، {ms}ms"
+                    return f"{r.status_code}، پاسخ خالی"
+            except Exception as e:
+                return type(e).__name__
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futs = {ex.submit(probe, u): u for u in SPEED_ENDPOINTS}
+            for f in as_completed(futs):
+                out[futs[f]] = f.result()
+        good = [k for k, v in out.items() if v.startswith("2")]
+        host = lambda u: u.split("/")[2]          # noqa: E731
+        self.log("🔧 سلامت ابزار تست (مستقیم، بدون تونل): " +
+                 " • ".join(f"{host(u)}: {out[u]}" for u in SPEED_ENDPOINTS))
+        if not good:
+            self.log("⚠ هیچ اندپوینتِ سرعتی از خودِ شبکه در دسترس نیست — اعدادِ تست ممکن است نیم‌بنده؛")
+            self.log("  اگر اینترنت‌تان روی سایتی مثل dl.google.com هم مشکل دارد، اول آن را چک کنید.")
+        return out
+
     # ---------- پیش‌فیلتر TCP (خیلی سریع) ----------
     def _tcp_alive(self, server: str, port: int) -> bool:
         try:
@@ -981,7 +1122,7 @@ class VpnEngine:
             if self.stop_flag.is_set():
                 return None
             try:
-                r = SESSION.get(tpl.format(url=url), timeout=20)
+                r = SESSION.get(tpl.format(url=url), timeout=12)
                 if r.status_code == 200 and r.text.strip():
                     return r.text
             except Exception:
@@ -1059,8 +1200,14 @@ class VpnEngine:
             proxies = {"http": f"socks5h://127.0.0.1:{port}",
                        "https": f"socks5h://127.0.0.1:{port}"}
             t0 = time.time()
-            r = SESSION.get("http://cp.cloudflare.com/generate_204",
-                            proxies=proxies, timeout=LATENCY_TIMEOUT)
+            try:
+                r = SESSION.get("http://cp.cloudflare.com/generate_204",
+                                proxies=proxies, timeout=LATENCY_TIMEOUT)
+            except Exception:
+                if self.stop_flag.is_set():
+                    return None
+                r = SESSION.get("https://www.gstatic.com/generate_204",
+                                proxies=proxies, timeout=LATENCY_TIMEOUT)  # اندپوینتِ دوم (v1.7)
             if r.status_code >= 400:
                 return None
             if not self._real_site_ok(proxies):
@@ -1077,6 +1224,8 @@ class VpnEngine:
                 pass
 
     def test_speed(self, node: Node):
+        """تست سرعتِ ساده (مسیرِ رزرو). v1.7: تا ۲ اندپوینتِ مستقل — ۴۰۳ِ کلادفلر
+        دیگر «سرعت صفر» معنی نمی‌دهد؛ بهترین اندازه برمی‌گردد."""
         if self.stop_flag.is_set():
             return 0.0
         port = self._next_port()
@@ -1097,25 +1246,31 @@ class VpnEngine:
                 return 0.0
             proxies = {"http": f"socks5h://127.0.0.1:{port}",
                        "https": f"socks5h://127.0.0.1:{port}"}
-            t0 = time.time()
-            total = 0
-            with SESSION.get("https://speed.cloudflare.com/__down?bytes=6000000",
-                             stream=True, proxies=proxies,
-                             timeout=(5, SPEED_TIMEOUT)) as r:
-                if r.status_code >= 400:
-                    return 0.0
-                for chunk in r.iter_content(65536):
-                    total += len(chunk)
-                    if total >= SPEED_MAX_BYTES:
-                        break
-                    if time.time() - t0 > SPEED_TIMEOUT:
-                        break
-            elapsed = time.time() - t0
-            if elapsed <= 0.05 or total < 100_000:
-                return 0.0
-            return total * 8.0 / elapsed / 1e6
-        except Exception:
-            return 0.0
+            best = 0.0
+            for k in range(SPEED_ENDPOINT_ATTEMPTS):
+                if self.stop_flag.is_set():
+                    break
+                url = SPEED_ENDPOINTS[(self._ep_cursor + k) % len(SPEED_ENDPOINTS)]
+                t0 = time.time()
+                total = 0
+                try:
+                    with SESSION.get(url, stream=True, proxies=proxies,
+                                     timeout=(5, SPEED_TIMEOUT)) as r:
+                        if r.status_code >= 400:
+                            continue        # اندپوینت این نود را بلاک کرده — بعدی
+                        for chunk in r.iter_content(65536):
+                            total += len(chunk)
+                            if total >= SPEED_MAX_BYTES or time.time() - t0 > SPEED_TIMEOUT:
+                                break
+                except Exception:
+                    continue
+                el = time.time() - t0
+                if el > 0.05 and total >= 100_000:
+                    best = max(best, total * 8.0 / el / 1e6)
+                    if best >= MIN_GOOD_SPEED_MBPS:
+                        self._ep_cursor = (self._ep_cursor + k + 1) % len(SPEED_ENDPOINTS)
+                        break               # کافی است
+            return best
         finally:
             if proc:
                 self._stop_xray(proc)
@@ -1126,14 +1281,14 @@ class VpnEngine:
 
     # ---------- تست‌های تکمیلی ----------
     def _real_site_ok(self, proxies: dict, timeout: float = 6.0) -> bool:
-        """باز شدن یک سایت واقعی TLS از داخل تونل (ضد «وصل شد ولی کار نمی‌کند»)."""
+        """باز شدن یک سایت واقعی TLS از داخل تونل (ضد «وصل شد ولی کار نمی‌کند»).
+        v1.7: هر پاسخ HTTP کافی است — حتی ۴۰۳/۴۲۹؛ پاسخ گرفتن یعنی تونل TLS را تا مقصد
+        می‌رساند. شرطِ status<400 کانفیگ‌های سالم را بی‌جهت رد می‌کرد."""
         try:
             r = SESSION.get(REAL_SITE_URL, proxies=proxies, stream=True,
                             timeout=(4, timeout))
-            ok = r.status_code < 400
-            first = next(r.iter_content(4096), b"")
             r.close()
-            return ok and len(first) > 0
+            return True
         except Exception:
             return False
 
@@ -1151,30 +1306,42 @@ class VpnEngine:
 
     def check_sites(self, proxies: dict, timeout: float = SITE_TIMEOUT) -> list:
         """سایت‌های واقعی را یکی‌یکی با این تونل باز می‌کند؛ لیست بازشده‌ها برمی‌گردد.
-        همان کاری که کاربر بعدا با مرورگر/برنامه انجام می‌دهد — ضد «پینگ می‌دهد ولی هیچی باز نمی‌شود»."""
-        opened = []
+        v1.7 — تغییرِ مهم: «باز شدن» یعنی «هر پاسخ HTTP»، حتی ۴۰۳/۴۲۹/۵xx.
+        هدف فقط این است که بفهمیم تونل TLS را تا مقصدِ واقعی می‌رساند؛ اینستاگرام به
+        IPهای دیتاسنتر خیلی وقت‌ها ۴۰۳/۴۲۹ می‌دهد ولی همین پاسخ هم یعنی تونل سالم است.
+        قبلاً status<400 شرط بود و همین، کانفیگ‌های سالم را بی‌جهت رد می‌کرد.
+        جزئیاتِ هر سایت (کد یا نوع خطا) در _last_sites_detail می‌ماند برای گزارشِ قیف."""
+        opened, detail = [], []
         for name, url in SITE_TARGETS:
             if self.stop_flag.is_set():
                 break
             try:
                 r = SESSION.get(url, proxies=proxies, stream=True,
                                 timeout=(4, timeout), headers=self._BROWSER_UA)
-                ok = r.status_code < 400
-                if ok and r.status_code != 204:      # 204 بدنه ندارد
-                    first = next(r.iter_content(2048), b"")
-                    ok = len(first) > 0
+                code = r.status_code
                 r.close()
-                if ok:
-                    opened.append(name)
-            except Exception:
-                continue
+                opened.append(name)
+                detail.append(f"{name}={code}")
+            except Exception as e:
+                et = type(e).__name__
+                detail.append(f"{name}={'تایم‌اوت' if 'Timeout' in et else et}")
+        self._last_sites_detail = "، ".join(detail)
         return opened
 
     # ---------- تست عمیق: یک Xray برای همه‌ی سنجه‌ها (سایت‌ها + دان + آپ) ----------
+    def _funnel(self, key: str, reason: str | None = None):
+        """شمارنده‌ی قیفِ تست: هر رد/قبول با دلیل ثبت می‌شود (گزارشِ آخرِ اسکن)."""
+        st = self.scan_stats
+        st[key] = st.get(key, 0) + 1
+        if reason:
+            rd = st.setdefault("reasons", {})
+            rd[reason] = rd.get(reason, 0) + 1
+
     def deep_test(self, node: Node):
-        """یک کانفیگ را کامل می‌سنجد؛ اگر حداقل SITE_MIN_PASS سایت باز کند،
+        """یک کانفیگ را کامل می‌سنجد؛ اگر حداقل SITE_MIN_PASS سایت باز کند,
         خود Node با latency/speed/up_speed/verified پر شده برمی‌گردد، وگرنه None.
-        فقط «یک» هسته Xray برای همه‌ی سنجه‌ها بالا می‌آید (سریع‌تر از دو مرحله‌ی جدا)."""
+        فقط «یک» هسته Xray برای همه‌ی سنجه‌ها بالا می‌آید (سریع‌تر از دو مرحله‌ی جدا).
+        هر رد، در قیفِ تست با دلیل ثبت می‌شود (v1.7)."""
         if self.stop_flag.is_set():
             return None
         port = self._next_port()
@@ -1197,26 +1364,34 @@ class VpnEngine:
             proxies = {"http": f"socks5h://127.0.0.1:{port}",
                        "https": f"socks5h://127.0.0.1:{port}"}
 
-            # ۱) سایت‌های واقعی باید باز شوند
+            # ۱) سایت‌های واقعی باید باز شوند (v1.7: هر پاسخ HTTP = باز شده)
             opened = self.check_sites(proxies)
+            node.extra["sites_detail"] = self._last_sites_detail
             if self.stop_flag.is_set():
                 return None
             if len(opened) < SITE_MIN_PASS:
+                self._funnel("site_fail",
+                             "تایم‌اوتِ سایت" if "تایم‌اوت" in self._last_sites_detail else "سایت‌ها پاسخ ندادند")
+                self.log(f"✗ رد شد: {node.display()} — سایت‌ها: {self._last_sites_detail or 'هیچ پاسخی'}")
                 return None
             node.extra["opened"] = "،".join(opened)
+            self._funnel("site_ok")
 
-            # ۲) سرعت دانلودِ «پایدار» از داخل همان تونل (۳ دانلود موازی، بدون slow-start)
-            node.speed = self._dl_speed_on_port(proxies)
+            # ۲) سرعتِ دانلودِ «پایدار» — v1.7: آبشارِ اندپوینت (کلادفلر↔گوگل↔هتزنر↔OVH)
+            node.speed, sp_detail, sp_reason = self._dl_speed_on_port(proxies)
 
             # ۳) نودِ «فقط‌پینگی»: سایت‌ها باز شدند ولی داده‌ی واقعی رد نمی‌شود → رد
             if node.speed < MIN_USABLE_SPEED_MBPS:
-                self.log(f"✗ رد شد: {node.display()} — سایت‌ها باز شدند ولی سرعتِ پایدار "
-                         f"{node.speed:.1f} Mbps است (فقط‌پینگی)")
+                self._funnel("speed_fail", sp_reason)
                 node.extra["dead_data"] = True
+                node.extra["speed_detail"] = sp_detail
+                self.log(f"✗ رد شد: {node.display()} — سایت‌ها باز شدند ولی سرعتِ پایدار "
+                         f"{node.speed:.1f} Mbps است ({sp_detail}) — فقط‌پینگی")
                 return None
 
             # تایید فقط بعد از سالم‌بودن سرعت ثبت می‌شود تا نودِ بی‌سرعت در رتبه‌بندی بالا نِشیند
             node.extra["verified"] = True
+            self._funnel("speed_ok")
 
             # ۴) سرعت آپلود واقعی از داخل همان تونل
             if not self.stop_flag.is_set():
@@ -1232,26 +1407,25 @@ class VpnEngine:
             except OSError:
                 pass
 
-    def _dl_speed_on_port(self, proxies: dict, timeout: float = SUSTAIN_SECONDS) -> float:
-        """تست سرعت دانلودِ «پایدار» روی یک تونل مشخص (Mbps).
-        مثل یک مرورگر واقعی: چند دانلودِ موازی از CDNهای متفاوت (کلادفلر ×۲ + فایل بزرگ
-        از CDN گوگل) به مدت ۶ ثانیه؛ سرعت فقط از ثانیه‌ی ۱.۵ به بعد حساب می‌شود تا اثر
-        slow-start حذف شود و «سرعتِ شروعِ خوب ولی قطعِ بعد از چند کیلوبایت» دیگر
-        به‌عنوان سرعتِ خوب ثبت نشود."""
-        if self.stop_flag.is_set():
-            return 0.0
+    def _sustain_probe(self, proxies: dict, url: str, timeout: float) -> tuple:
+        """یک اندپوینت، ۳ دانلودِ موازی مثل مرورگر واقعی؛ سرعت فقط از پسِ warmup.
+        خروجی: (mbps، کلِ بایتِ دانلودشده، دلیلِ کوتاه) — دلیل برای گزارشِ قیف."""
         lock = threading.Lock()
         samples = []                      # هر نخ: لیستِ (زمان، بایتِ تجمعی)
+        got_total = [0]
+        reasons = []
         t_start = time.time()
         deadline = t_start + timeout
 
-        def worker(url: str):
+        def worker():
             got = 0
             pts = [(t_start, 0.0)]
             try:
                 with SESSION.get(url, stream=True, proxies=proxies,
                                  timeout=(5, timeout + 3)) as r:
                     if r.status_code >= 400:
+                        with lock:
+                            reasons.append(f"http_{r.status_code}")
                         return
                     for chunk in r.iter_content(65536):
                         got += len(chunk)
@@ -1260,15 +1434,17 @@ class VpnEngine:
                             pts.append((now, float(got)))
                         if now >= deadline:
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                et = type(e).__name__
+                with lock:
+                    reasons.append("تایم‌اوت" if "Timeout" in et else et)
             finally:
                 pts.append((time.time(), float(got)))
                 with lock:
                     samples.append(pts)
+                    got_total[0] += got
 
-        ths = [threading.Thread(target=worker, args=(u,), daemon=True)
-               for u in SUSTAIN_ENDPOINTS]
+        ths = [threading.Thread(target=worker, daemon=True) for _ in range(3)]
         for t in ths:
             t.start()
         for t in ths:
@@ -1291,13 +1467,48 @@ class VpnEngine:
                 any_data = True
             total_after += max(0.0, b_end - b_cut)
         span = t_end - t_cut
-        # حالتِ لینکِ خیلی سریع: کلِ فایل‌ها در همان warmup تمام شده — یعنی لینک قطعاً سریع است؛
-        # با میانگینِ warmup گزارشش می‌کنیم (کمی محافظه‌کارانه ولی به‌قدرِ کافی بالا).
+        # حالتِ لینکِ خیلی سریع: کلِ فایل در همان warmup تمام شده — با میانگینِ warmup گزارش می‌شود
+        mbps = 0.0
         if total_after >= 120_000 and any_data and span > 0.2:
-            return total_after * 8.0 / span / 1e6
-        if total_all >= 3_000_000:
-            return total_all * 8.0 / max(SUSTAIN_WARMUP, 0.1) / 1e6
-        return 0.0
+            mbps = total_after * 8.0 / span / 1e6
+        elif total_all >= 3_000_000:
+            mbps = total_all * 8.0 / max(SUSTAIN_WARMUP, 0.1) / 1e6
+        with lock:
+            rsn = reasons[0] if reasons else ""
+        if not rsn:
+            rsn = "ok" if got_total[0] > 0 else "پاسخِ بی‌داده"
+        return mbps, got_total[0], rsn
+
+    def _dl_speed_on_port(self, proxies: dict, timeout: float = SUSTAIN_SECONDS) -> tuple:
+        """تست سرعتِ دانلودِ «پایدار» روی یک تونل مشخص.
+        v1.7 — آبشارِ اندپوینت: کانفیگ‌های پشتِ کلادفلر از speed.cloudflare.com خیلی
+        وقت‌ها ۴۰۳/۴۲۹ می‌گیرند (خروجِ کلادفلری، نه تونلِ مرده) — قبلاً این یعنی
+        «سرعت صفر» و ردِ کاذب. حالا اگر اندپوینتی دیتای معتبر نداد، اندپوینتِ بعدی
+        (گوگل/هتزنر/OVH) امتحان می‌شود (تا SPEED_ENDPOINT_ATTEMPTS)؛ اگر دیتای معتبر
+        آمد، همان عدد ملاک است — کندیِ واقعی تونل پنهان نمی‌شود.
+        خروجی: (mbps، جزئیاتِ فارسی برای لاگ، دلیلِ کوتاه برای قیف)"""
+        if self.stop_flag.is_set():
+            return 0.0, "لغو شد", "لغو"
+        idx = self._ep_cursor
+        best, best_detail, best_reason = 0.0, "", ""
+        for k in range(SPEED_ENDPOINT_ATTEMPTS):
+            url = SPEED_ENDPOINTS[(idx + k) % len(SPEED_ENDPOINTS)]
+            host = url.split("/")[2]
+            mbps, got, reason = self._sustain_probe(proxies, url, timeout)
+            if mbps > best:
+                best, best_reason = mbps, reason
+                best_detail = f"{mbps:.1f}Mbps از {host}"
+            if got >= SPEED_MIN_VALID_BYTES:
+                # دیتای معتبر رد شد → عدد واقعیِ تونل است؛ کندی از اندپوینت نیست
+                self._ep_cursor = (idx + k + 1) % len(SPEED_ENDPOINTS)
+                final_reason = "کم‌سرعت" if best < MIN_USABLE_SPEED_MBPS else "ok"
+                return best, (best_detail or f"{host}: دیتای ناچیز"), final_reason
+            if not best_detail:
+                best_detail = f"{host}: {reason}"
+            if reason not in ("ok",) and not best_reason:
+                best_reason = reason
+        self._ep_cursor = (idx + 1) % len(SPEED_ENDPOINTS)
+        return best, (best_detail or "بدون داده"), (best_reason or "بدون داده")
 
     def _ul_speed_on_port(self, proxies: dict, timeout: float = 10.0) -> float:
         """تست سرعت آپلود روی یک تونل مشخص (Mbps)."""
@@ -1377,16 +1588,24 @@ class VpnEngine:
 
     # ---------- اسکن کامل ----------
     def scan(self, nodes: list):
-        """پیش‌فیلتر TCP → پینگ موازی → تست عمیق (تا ۳ دور اگر دور اول خالی بود) → بهترین. خروجی: (بهترین، سالم‌ها)"""
-        stats = {"fetched": len(nodes)}
+        """پیش‌فیلتر TCP → پینگ موازی (+ یک تلاشِ مجدد) → تست عمیق (تا ۳ دور) → بهترین.
+        v1.7: گزارشِ «قیف» با دلیلِ رد در هر مرحله + حالتِ اضطراری (به‌جای «هیچ‌کدام کار نمی‌کند»
+        به کم‌پینگ‌ترینِ سالم‌ها وصل می‌شود و نگهبان بقیه‌اش را می‌گیرد).
+        خروجی: (بهترین، سالم‌ها)"""
+        stats = {"fetched": len(nodes), "reasons": {}}
         self.scan_stats = stats
         try:
             self.ensure_features()
         except Exception:
             pass
+        # v1.7: کانفیگ‌های شخصی (my_configs.txt) هرگز حذفِ نمونه‌گیری نمی‌شوند
+        mine = [n for n in nodes if n.extra.get("my")]
         if len(nodes) > MAX_TEST_NODES:
-            nodes = random.sample(nodes, MAX_TEST_NODES)
-            self.log(f"→ نمونه‌گیری تصادفی: بررسی {len(nodes)} کانفیگ")
+            keep = mine[:20]
+            rest = [n for n in nodes if not n.extra.get("my")]
+            nodes = keep + random.sample(rest, max(0, MAX_TEST_NODES - len(keep)))
+            self.log(f"→ نمونه‌گیری تصادفی: بررسی {len(nodes)} کانفیگ"
+                     + (f" (شامل {len(keep)} کانفیگِ شخصی)" if keep else ""))
 
         alive = self.tcp_prefilter(nodes)
         stats["tcp_alive"] = len(alive)
@@ -1396,31 +1615,45 @@ class VpnEngine:
         if len(alive) > MAX_XRAY_LATENCY_TESTS:
             alive = random.sample(alive, MAX_XRAY_LATENCY_TESTS)
 
-        lat_ok = []
-        done = 0
-        with ThreadPoolExecutor(max_workers=CONCURRENT_TESTS) as ex:
-            futs = {ex.submit(self.test_latency, n): n for n in alive}
-            for f in as_completed(futs):
-                if self.stop_flag.is_set():
-                    break
-                n = futs[f]
-                r = f.result()
-                done += 1
-                if r is not None:
-                    n.latency = r
-                    lat_ok.append(n)
-                if done % 10 == 0 or done == len(alive):
-                    self.progress("latency", done, len(alive),
-                                  f"تست پینگ {done}/{len(alive)} — {len(lat_ok)} کانفیگ سالم")
+        def _latency_pass(pool, label):
+            ok_list, fail_list = [], []
+            done = 0
+            with ThreadPoolExecutor(max_workers=CONCURRENT_TESTS) as ex:
+                futs = {ex.submit(self.test_latency, n): n for n in pool}
+                for f in as_completed(futs):
+                    if self.stop_flag.is_set():
+                        break
+                    n = futs[f]
+                    r = f.result()
+                    done += 1
+                    if r is not None:
+                        n.latency = r
+                        ok_list.append(n)
+                    else:
+                        fail_list.append(n)
+                    if done % 10 == 0 or done == len(pool):
+                        self.progress("latency", done, len(pool),
+                                      f"تست پینگ {done}/{len(pool)} — {len(ok_list)} کانفیگ سالم")
+            return ok_list, fail_list
+
+        lat_ok, lat_fail = _latency_pass(alive, "اصلی")
+        # v1.7: ردهایِ پینگ یک بار دیگر امتحان می‌شوند — تایم‌اوتِ لحظه‌ی شلوغی = ردِ کاذب
+        if lat_fail and len(lat_fail) <= LATENCY_RETRY_MAX and not self.stop_flag.is_set():
+            self.log(f"↻ {len(lat_fail)} کانفیگِ ردشده یک بار دیگر امتحان می‌شوند…")
+            ok2, _ = _latency_pass(lat_fail, "تلاشِ مجدد")
+            lat_ok.extend(ok2)
+            stats["latency_retry_ok"] = len(ok2)
         if self.stop_flag.is_set():
             return None, lat_ok
         lat_ok.sort(key=lambda n: n.latency)
         stats["latency_ok"] = len(lat_ok)
-        self.log(f"✓ پینگ تمام شد: {len(lat_ok)} کانفیگ سالم از {len(alive)}")
+        self.log(f"✓ پینگ تمام شد: {len(lat_ok)} کانفیگ سالم از {len(alive)}"
+                 + (f" (با تلاشِ مجدد: {stats.get('latency_retry_ok', 0)} نجات یافت)"
+                    if stats.get("latency_retry_ok") else ""))
 
         # ---- مرحله‌ی «تست عمیق»: با کم‌پینگ‌ترین‌ها، یوتوب/اینستاگرام/تلگرام ----
         # واقعا باز می‌شوند + سرعت دانلود و آپلود واقعی هر کدام سنجیده می‌شود.
-        # v1.6: اگر دور اول هیچ کاندیدی تایید نکرد، ۴۰ کاندید بعدی هم امتحان می‌شود (تا DEEP_ROUNDS دور).
+        # اگر دور اول هیچ کاندیدی تایید نکرد، ۴۰ کاندید بعدی هم امتحان می‌شوند (تا DEEP_ROUNDS دور).
         verified = []
         pool_start = 0
         for rnd in range(DEEP_ROUNDS):
@@ -1441,6 +1674,7 @@ class VpnEngine:
         else:
             self.log("⚠ هیچ کاندیدی سایت‌ها را باز نکرد — روش قدیمی (تست سرعت ساده) ادامه می‌دهد")
 
+        best = None
         if verified:
             # سرعتِ پایدار اجباری است — دیگر هیچ‌وقت به نودِ بی‌سرعت وصل نمی‌شویم
             fast = [n for n in verified if n.speed >= MIN_GOOD_SPEED_MBPS]
@@ -1450,44 +1684,59 @@ class VpnEngine:
                 best = max(fast, key=lambda n: (n.speed, -(n.latency or 0)))
                 self.log(f"✓ انتخاب شد: {best.display()} — دانِ پایدار {best.speed:.1f} • "
                          f"آپ {best.up_speed:.1f} Mbps — پینگ {int(best.latency or 0)}ms")
-                return best, lat_ok
-            if usable:
+            elif usable:
                 best = max(usable, key=lambda n: (n.speed, -(n.latency or 0)))
                 self.log(f"⚠ هیچ کاندیدِ سریعی نبود — بهترینِ قابل‌استفاده انتخاب شد: "
                          f"{best.display()} ({best.speed:.1f} Mbps)")
-                return best, lat_ok
-            self.log("⚠ هیچ کاندیدی سرعتِ قابل‌استفاده نداشت — روشِ ساده ادامه می‌دهد")
 
-        # fallback: هیچ کاندیدی تایید نشد → همان مسیر v1.3 (تست سرعت ساده)
-        top = lat_ok[:TOP_SPEED_TESTS]
-        rest = lat_ok[TOP_SPEED_TESTS:]
-        if rest and EXTRA_SPEED_SAMPLES:
-            top = top + random.sample(rest, min(EXTRA_SPEED_SAMPLES, len(rest)))
-        if top:
-            sdone = 0
-            with ThreadPoolExecutor(max_workers=CONCURRENT_SPEED_TESTS) as ex:
-                futs = {ex.submit(self.test_speed, n): n for n in top}
-                for f in as_completed(futs):
-                    n = futs[f]
-                    n.speed = f.result()
-                    sdone += 1
-                    self.progress("speed", sdone, len(top),
-                                  f"تست سرعت {sdone}/{len(top)} — {n.display()} ({n.speed:.1f} Mbps)")
-            for n in sorted(top, key=lambda x: -x.speed):
-                self.log(f"   {n.display():<40} پینگ {int(n.latency):>4}ms  سرعت {n.speed:>6.1f} Mbps")
+        if best is None:
+            # fallback: هیچ کاندیدی تایید نشد → همان مسیر قدیمی (تست سرعت ساده)
+            top = lat_ok[:TOP_SPEED_TESTS]
+            rest = lat_ok[TOP_SPEED_TESTS:]
+            if rest and EXTRA_SPEED_SAMPLES:
+                top = top + random.sample(rest, min(EXTRA_SPEED_SAMPLES, len(rest)))
+            if top:
+                sdone = 0
+                with ThreadPoolExecutor(max_workers=CONCURRENT_SPEED_TESTS) as ex:
+                    futs = {ex.submit(self.test_speed, n): n for n in top}
+                    for f in as_completed(futs):
+                        n = futs[f]
+                        n.speed = f.result()
+                        sdone += 1
+                        self.progress("speed", sdone, len(top),
+                                      f"تست سرعت {sdone}/{len(top)} — {n.display()} ({n.speed:.1f} Mbps)")
+                for n in sorted(top, key=lambda x: -x.speed):
+                    self.log(f"   {n.display():<40} پینگ {int(n.latency):>4}ms  سرعت {n.speed:>6.1f} Mbps")
 
-        fast = [n for n in top if n.speed >= MIN_GOOD_SPEED_MBPS]
-        usable = [n for n in top if n.speed >= MIN_USABLE_SPEED_MBPS]
-        stats["usable"] = stats.get("usable", 0) or len(usable)
-        if fast:
-            best = max(fast, key=lambda n: (n.speed, -n.latency))
-        elif usable:
-            best = max(usable, key=lambda n: (n.speed, -n.latency))
-            self.log(f"⚠ بهترینِ قابل‌استفاده (سرعت پایین): {best.display()} — {best.speed:.1f} Mbps")
-        else:
-            # قبلاً اینجا best = top[0] بود → همان نودِ «فقط‌پینگی» وصل می‌شد. حالا: هیچ‌کس.
-            best = None
-            self.log("✗ هیچ کاندیدی سرعتِ واقعی نداشت — اتصال انجام نمی‌شود (جلوگیری از نودِ فقط‌پینگی)")
+            fast = [n for n in top if n.speed >= MIN_GOOD_SPEED_MBPS]
+            usable = [n for n in top if n.speed >= MIN_USABLE_SPEED_MBPS]
+            stats["usable"] = stats.get("usable", 0) or len(usable)
+            if fast:
+                best = max(fast, key=lambda n: (n.speed, -n.latency))
+            elif usable:
+                best = max(usable, key=lambda n: (n.speed, -n.latency))
+                self.log(f"⚠ بهترینِ قابل‌استفاده (سرعت پایین): {best.display()} — {best.speed:.1f} Mbps")
+
+        if best is None and lat_ok and not self.stop_flag.is_set():
+            # ===== v1.7 — حالتِ اضطراری: بن‌بستِ «هیچ‌کدام کار نمی‌کند» حذف شد =====
+            # هیچ کاندیدی سرعتِ تأییدشده نداشت، ولی چند تونلِ زنده داریم؛ به کم‌پینگ‌ترین
+            # وصل می‌شویم (دروازه‌ی شُل‌تر) — اگر عملاً بی‌سرعت بود، نگهبان خودش عوضش می‌کند.
+            best = min(lat_ok, key=lambda n: n.latency)
+            best.extra["emergency"] = True
+            self.log(f"⚠ حالت اضطراری: هیچ کاندیدی سرعتِ تأییدشده نداشت — اتصال به کم‌پینگ‌ترینِ "
+                     f"سالم‌ها: {best.display()} (پینگ {int(best.latency or 0)}ms)")
+            self.log("  اگر سرعت عملاً صفر باشد، نگهبانِ برنامه خودش سرور را عوض می‌کند.")
+
+        # ---- گزارشِ قیفِ تست (v1.7): دقیقاً کجا رد شدند؟ ----
+        rs = stats.get("reasons") or {}
+        rs_txt = "، ".join(f"{k}={v}" for k, v in sorted(rs.items(), key=lambda x: -x[1])[:5])
+        self.log(f"📊 قیف تست: دریافت {stats['fetched']} ← زنده {stats.get('tcp_alive', 0)} ← "
+                 f"پینگ {stats.get('latency_ok', 0)} ← سایت {stats.get('site_ok', 0)} ← "
+                 f"سرعتِ تأیید {stats.get('verified', 0)}"
+                 + (f" — دلایلِ رد: {rs_txt}" if rs_txt else ""))
+
+        if best is None:
+            self.log("✗ حتی یک تونلِ پاسخ‌گو هم نبود — اتصال انجام نمی‌شود")
         return best, lat_ok
 
     # ---------- مسیر سریع: سرورهای خوب قبلی ----------
@@ -1695,19 +1944,26 @@ class VpnEngine:
         return False
 
     def light_speed(self, bytes_to: int = 262144, timeout: float = 8.0) -> float:
-        """نمونه‌گیری سبک سرعت دانلود از داخل تونل فعال (هر ~۲۰ ثانیه یک‌بار).
+        """نمونه‌گیری سبک سرعت دانلود از داخل تونل فعال (دروازه‌ی اتصال + نگهبان).
         ضد «صفرِ کاذب»: اگر لینک آن‌قدر سریع باشد که حجم اولیه در کمتر از ۰.۱۵ ثانیه
-        تمام شود، یک‌بار دیگر با حجم بزرگ‌تر اندازه می‌گیریم تا عدد واقعی دربیاید."""
+        تمام شود، یک‌بار دیگر با حجم بزرگ‌تر اندازه می‌گیریم.
+        v1.7: اگر اندپوینتِ اول پاسخ ≥۴۰۰ داد (کلادفلر به خروجِ کلادفلری ۴۰۳ می‌دهد)،
+        اندپوینتِ بعدی امتحان می‌شود؛ اندپوینتِ سالم برای کل اتصال کش می‌شود."""
         if not self.proc or self.proc.poll() is not None:
             return 0.0
         proxies = {"http": f"http://127.0.0.1:{self.http_port}",
                    "https": f"http://127.0.0.1:{self.http_port}"}
+        order = []
+        if self._gate_ep in SPEED_ENDPOINTS:
+            order.append(self._gate_ep)
+        order += [u for u in SPEED_ENDPOINTS if u not in order]
 
-        def fetch(size: int):
+        def fetch(url: str, size: int):
             total = 0
             t0 = time.time()
-            with SESSION.get(f"https://speed.cloudflare.com/__down?bytes={size}",
-                             stream=True, proxies=proxies, timeout=(5, timeout)) as r:
+            u = url if "speed.cloudflare.com" not in url \
+                else f"https://speed.cloudflare.com/__down?bytes={size}"
+            with SESSION.get(u, stream=True, proxies=proxies, timeout=(5, timeout)) as r:
                 if r.status_code >= 400:
                     return 0, 0.0
                 for chunk in r.iter_content(65536):
@@ -1716,17 +1972,26 @@ class VpnEngine:
                         break
             return total, time.time() - t0
 
-        try:
-            total, el = fetch(bytes_to)
-            if el < 0.15 and total >= bytes_to and bytes_to < 8_388_608 \
-                    and not self.stop_flag.is_set() \
-                    and self.proc and self.proc.poll() is None:
-                total, el = fetch(min(bytes_to * 8, 8_388_608))   # لینک خیلی سریع — دوباره
-            if el <= 0.05 or total < 50_000:
-                return 0.0
-            return total * 8.0 / el / 1e6
-        except Exception:
-            return 0.0
+        best = 0.0
+        for url in order[:SPEED_ENDPOINT_ATTEMPTS]:
+            if self.stop_flag.is_set() or not self.proc or self.proc.poll() is not None:
+                break
+            try:
+                total, el = fetch(url, bytes_to)
+                if el < 0.15 and total >= bytes_to and bytes_to < 8_388_608 \
+                        and not self.stop_flag.is_set() \
+                        and self.proc and self.proc.poll() is None:
+                    total, el = fetch(url, min(bytes_to * 8, 8_388_608))   # لینک خیلی سریع — دوباره
+                if el > 0.05 and total >= 50_000:
+                    mbps = total * 8.0 / el / 1e6
+                    if mbps > best:
+                        best = mbps
+                        self._gate_ep = url
+                    if best >= 0.1:
+                        return best        # یک اندپوینت جواب داد — کافی است
+            except Exception:
+                continue
+        return best
 
     # ---------- اتصال نهایی ----------
     def _alloc_local_port(self, start: int) -> int:
@@ -1780,14 +2045,18 @@ class VpnEngine:
         # ===== دروازه‌ی سرعت (قبل از فعال‌کردن پروکسی سیستم) =====
         # نودِ «فقط‌پینگی» اینجا هم اگر سرعت واقعی نداشته باشد رد می‌شود و
         # _connect_with_fallback خودش سراغ کاندید بعدی می‌رود.
+        # v1.7: کاندیدِ تأییدشده ← دروازه‌ی کامل؛ کاندیدِ اضطراریِ بدون تأیید ← دروازه‌ی شُل‌تر
+        # (وصل‌شدنِ ضعیف بهتر از پیامِ «هیچ‌کدام کار نمی‌کند» است؛ نگهبان بقیه‌اش را می‌گیرد)
+        self._gate_ep = None
         if ok:
+            gate_limit = CONNECT_GATE_MBPS if node.extra.get("verified") else EMERGENCY_GATE_MBPS
             gate = self.light_speed(bytes_to=1_000_000, timeout=8)
-            if gate < CONNECT_GATE_MBPS:
+            if gate < gate_limit:
                 tail = self._read_err_tail(errlog)
                 self.disconnect(restore_proxy=False)
                 raise RuntimeError(
                     f"تونل وصل شد ولی سرعت واقعی {gate:.1f} Mbps است "
-                    f"(کمتر از حداقل {CONNECT_GATE_MBPS}) — رد شد، رفتن به کاندید بعدی"
+                    f"(کمتر از حداقل {gate_limit}) — رد شد، رفتن به کاندید بعدی"
                     + (f" — {tail}" if tail else ""))
         if not ok:
             tail = self._read_err_tail(errlog)
