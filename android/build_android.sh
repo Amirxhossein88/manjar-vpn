@@ -7,7 +7,7 @@
 #   - هسته‌ی Xray اندروید arm64 (از ریلیزهای رسمی XTLS/Xray-core)
 #     → android/app/src/main/jniLibs/arm64-v8a/libxray.so
 #   - hev-socks5-tunnel: classes.jar (از AAR) و libhev-socks5-tunnel.so
-# خروجی: android/build/ManjarVPN-1.8.0-android.apk
+# خروجی: android/build/ManjarVPN-1.8.1-android.apk
 # =============================================================
 set -e
 
@@ -52,21 +52,25 @@ echo "== d8 =="
 
 echo "== package =="
 ( cd "$OUT/dex" && zip -q "$OUT/base.apk" classes.dex )
-( cd "$SRC" && zip -q "$OUT/base.apk" lib/arm64-v8a/libxray.so lib/arm64-v8a/libhev-socks5-tunnel.so )
-( cd "$SRC/assets" && zip -q "$OUT/base.apk" index.html logo.png fonts/vazir.woff2 fonts/vazirm.woff2 fonts/vazirb.woff2 )
+( rm -rf "$OUT/pkg" && mkdir -p "$OUT/pkg/lib/arm64-v8a" && cp "$SRC"/jniLibs/arm64-v8a/*.so "$OUT/pkg/lib/arm64-v8a/" && cd "$OUT/pkg" && zip -q "$OUT/base.apk" lib/arm64-v8a/libxray.so lib/arm64-v8a/libhev-socks5-tunnel.so )
+# FIX v1.8.1: assets MUST go under assets/ inside the APK — flat paths caused
+# net::ERR_FILE_NOT_FOUND for file:///android_asset/index.html
+( cd "$SRC" && zip -q "$OUT/base.apk" \
+    assets/index.html assets/logo.png \
+    assets/fonts/vazir.woff2 assets/fonts/vazirm.woff2 assets/fonts/vazirb.woff2 )
 
 echo "== zipalign =="
 "$BT/zipalign" -f 4 "$OUT/base.apk" "$OUT/aligned.apk"
 
 echo "== sign =="
-KS="$ROOT/keystore/manjar.keystore"
+KS="$ROOT/manjar.keystore"
 KS_PASS="${KS_PASS:-manjar172026}"
 "$JDK/bin/keytool" -genkeypair -v -keystore "$KS" -alias manjar -keyalg RSA -keysize 2048 \
   -validity 10950 -storepass "$KS_PASS" -keypass "$KS_PASS" \
   -dname "CN=ManjarVPN, OU=Manjar, O=Manjar, L=Tehran, C=IR" 2>/dev/null || true
 "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
-  --out "$OUT/ManjarVPN-1.8.0-android.apk" "$OUT/aligned.apk"
-"$BT/apksigner" verify "$OUT/ManjarVPN-1.8.0-android.apk"
+  --out "$OUT/ManjarVPN-1.8.1-android.apk" "$OUT/aligned.apk"
+"$BT/apksigner" verify "$OUT/ManjarVPN-1.8.1-android.apk"
 
 echo "== done =="
-ls -la "$OUT/ManjarVPN-1.8.0-android.apk"
+ls -la "$OUT/ManjarVPN-1.8.1-android.apk"
