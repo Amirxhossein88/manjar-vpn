@@ -52,6 +52,11 @@ public class ManjarVpnService extends VpnService {
             engine = new VpnEngine(this, new AccountStore(this));
             engine.setVpnService(this);
         }
+        // v1.8.4 — ارتقای فوری به foreground service:
+        // اسکنِ «اتصال خودکار» ۲ تا ۵ دقیقه طول می‌کشد؛ بدونِ foreground،
+        // اندروید ۱۲+ ممکن است پروسه را وسطِ اسکن فریز/بکشد (ظاهراً «کار نمی‌کند»)
+        // — حالا سرویس از همان شروع، foreground است و بعداً با متنِ «متصل» به‌روز می‌شود.
+        startForegroundCompat(getString(R.string.notif_preparing));
         // سرویس started می‌ماند تا وقتی فعالیت بسته شد موتور زنده بماند
         return START_NOT_STICKY;
     }
@@ -163,6 +168,11 @@ public class ManjarVpnService extends VpnService {
     public boolean isTunnelUp() { return tunnelUp; }
 
     private void startForegroundNotif() {
+        startForegroundCompat(getString(R.string.notif_connected));
+    }
+
+    /** نوتیفِ foreground — متن‌پذیر (آماده‌سازی ← متصل) — بدونِ کرش حتی اگر نوتیف بسته باشد */
+    private void startForegroundCompat(String text) {
         String channelId = "manjar_vpn";
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26) {
@@ -181,15 +191,19 @@ public class ManjarVpnService extends VpnService {
         else
             nb = new Notification.Builder(this);
         nb.setContentTitle("ManjarVPN")
-          .setContentText(getString(R.string.notif_connected))
+          .setContentText(text)
           .setSmallIcon(R.drawable.ic_stat_notify)
           .setOngoing(true)
           .setContentIntent(pi);
         Notification n = nb.build();
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(1001, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        } else {
-            startForeground(1001, n);
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(1001, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(1001, n);
+            }
+        } catch (Exception ignored) {
+            // اگر startForeground ممکن نشد (محدودیتِ سازنده و…) — اپ همچنان کار می‌کند
         }
     }
 

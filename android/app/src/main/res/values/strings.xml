@@ -3,4 +3,5 @@
     <string name="app_name">ManjarVPN</string>
     <string name="notif_channel">وضعیت اتصال</string>
     <string name="notif_connected">ManjarVPN — تونل فعال</string>
+    <string name="notif_preparing">ManjarVPN — در حال آماده‌سازی…</string>
 </resources>

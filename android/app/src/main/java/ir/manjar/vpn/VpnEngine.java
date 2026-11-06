@@ -1,6 +1,7 @@
 package ir.manjar.vpn;
 
 import android.content.Context;
+import android.os.PowerManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -115,6 +116,24 @@ public class VpnEngine {
     private SSLContext sslCtx;
     private volatile double gateEndpointSpeed = 0;
     private volatile String lastSitesDetail = "";
+    private PowerManager.WakeLock wakeLock;   // v1.8.4 — اسکن/تونل با خاموش‌شدنِ صفحه ننمیرد
+
+    /** نگه‌داشتنِ CPU (partial wake lock) در طولِ جریان‌های طولانی */
+    private void wakeHold() {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                if (pm == null) return;
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ManjarVPN:engine");
+                wakeLock.setReferenceCounted(false);
+            }
+            if (!wakeLock.isHeld()) wakeLock.acquire();
+        } catch (Exception ignored) {}
+    }
+
+    private void wakeRelease() {
+        try { if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); } catch (Exception ignored) {}
+    }
 
     public VpnEngine(Context ctx, AccountStore account) {
         this.ctx = ctx.getApplicationContext();
@@ -558,6 +577,15 @@ public class VpnEngine {
         Map<Subs.Node, Double> out = new HashMap<>();
         if (chunk.isEmpty() || stopFlag) return out;
         int base = nextTestPort();
+        // ================================================================
+        // v1.8.4 — رفعِ باگِ مرگبارِ v1.8.3:
+        // قبلاً portOf با «کپیِ رزولوشده» پر می‌شد ولی lookup با «نودِ اصلی»
+        // انجام می‌شد؛ Node برابر/هشِ override ندارد → نودهای دامنه‌دار (که
+        // withResolvedIp برایشان کپی می‌سازد) همیشه از map پیدا نمی‌شدند و
+        // کامل از تستِ پینگ حذف می‌شدند → روی گوشی تقریبا هیچ سروری پاس نمی‌شد.
+        // حالا: فهرستِ chunk و resolved هم‌ایندکس‌اند و lookup با همان
+        // «نمونه‌ی رزولوشده» انجام می‌شود؛ نتیجه با ایندکس به نودِ اصلی برمی‌گردد.
+        // ================================================================
         List<Subs.Node> resolved = new ArrayList<>();
         for (Subs.Node n : chunk) resolved.add(withResolvedIp(n));
         Map<Subs.Node, Integer> portOf = new HashMap<>();
@@ -582,8 +610,9 @@ public class VpnEngine {
             }
             ExecutorService ex = Executors.newFixedThreadPool(Math.min(chunk.size(), LATENCY_BATCH));
             Map<Subs.Node, java.util.concurrent.Future<Double>> futs = new LinkedHashMap<>();
-            for (final Subs.Node n : chunk) {
-                final Integer p = portOf.get(n);
+            for (int i = 0; i < resolved.size() && i < chunk.size(); i++) {
+                final Subs.Node n = chunk.get(i);                 // نودِ اصلی — کلیدِ نتیجه
+                final Integer p = portOf.get(resolved.get(i));    // پورت — از همان نمونه‌ای که به سازنده‌ی کانفیگ رفت
                 if (p == null) continue;
                 futs.put(n, ex.submit(() -> {
                     long t0 = System.currentTimeMillis();
@@ -659,8 +688,18 @@ public class VpnEngine {
     public Subs.Node deepTest(Subs.Node node) {
         if (stopFlag) return null;
         int port = nextTestPort();
+        // ================================================================
+        // v1.8.4 — رفعِ باگِ مرگبارِ دومِ مخصوصِ گوشی:
+        // قبلاً با اینکه withResolvedIp محاسبه می‌شد، connectHost همان
+        // node.server (دامنه) پاس می‌شد → آدرسِ اتصالِ اوت‌باند دامنه می‌ماند.
+        // Xray داخل اندروید /etc/resolv.conf ندارد → رزولوشنِ Go به 127.0.0.1:53
+        // می‌خورد → همه‌ی کانفیگ‌های دامنه‌دار در تستِ عمیق می‌مردند (روی
+        // کامپیوتر/لینوکس جواب می‌داد — برای همین در تست‌های JVM دیده نشد).
+        // حالا اتصال با آی‌پیِ حل‌شده انجام می‌شود؛ SNI/Host/Reality همان دامنه.
+        // ================================================================
+        Subs.Node target = withResolvedIp(node);
         JSONObject cfg;
-        try { cfg = Subs.buildXrayConfig(withResolvedIp(node), port, 0, node.server, node.port); }
+        try { cfg = Subs.buildXrayConfig(target, port, 0, target.server, target.port); }
         catch (Exception e) { return null; }
         if (cfg == null) return null;
         File tmp = new File(ctx.getCacheDir(), "manjarvpn_deep_" + port + ".json");
@@ -994,8 +1033,10 @@ public class VpnEngine {
 
     private double simpleSpeedTest(Subs.Node node) {
         int port = nextTestPort();
+        // v1.8.4 — مثل deepTest: اتصال با آی‌پیِ حل‌شده (SNI همان دامنه می‌ماند)
+        Subs.Node target = withResolvedIp(node);
         JSONObject cfg;
-        try { cfg = Subs.buildXrayConfig(withResolvedIp(node), port, 0, node.server, node.port); }
+        try { cfg = Subs.buildXrayConfig(target, port, 0, target.server, target.port); }
         catch (Exception e) { return 0; }
         if (cfg == null) return 0;
         File tmp = new File(ctx.getCacheDir(), "manjarvpn_sp_" + port + ".json");
@@ -1322,6 +1363,7 @@ public class VpnEngine {
                     stopFlag = false;
                     abortRepair.set(false);
                     busy = true;
+                    wakeHold();          // v1.8.4 — اسکن چنددقیقه‌ای با خاموش‌شدن صفحه زنده می‌ماند
                     ev("busy", null, null);
                     status("در حال بررسی اینترنت…", "amber");
                     if (!checkInternet()) {
@@ -1394,6 +1436,7 @@ public class VpnEngine {
                 if (!stopFlag) errorAndIdle("خطا: " + e.getClass().getSimpleName());
             } finally {
                 busy = false;
+                if (currentNode == null) wakeRelease();   // اگر وصل شد، تا قطعِ اتصال نگه داشته می‌شود
             }
         }, "manjar-flow");
         t.setDaemon(true);
@@ -1409,6 +1452,7 @@ public class VpnEngine {
                     stopFlag = false;
                     abortRepair.set(false);
                     busy = true;
+                    wakeHold();
                     ev("busy", null, null);
                     status("اتصال به " + node.display() + "…", "amber");
                     Subs.Node actual = connectWithFallback(node, new ArrayList<>(topNodes));
@@ -1418,6 +1462,7 @@ public class VpnEngine {
                 if (!stopFlag) errorAndIdle("خطا: " + e.getClass().getSimpleName());
             } finally {
                 busy = false;
+                if (currentNode == null) wakeRelease();
             }
         }, "manjar-node");
         t.setDaemon(true);
@@ -1431,6 +1476,7 @@ public class VpnEngine {
                     stopFlag = false;
                     abortRepair.set(false);
                     busy = true;
+                    wakeHold();
                     ev("busy", null, null);
                     status("بررسی کانفیگ دستی…", "amber");
                     List<Subs.Node> nodes = new ArrayList<>();
@@ -1468,6 +1514,7 @@ public class VpnEngine {
                 if (!stopFlag) errorAndIdle("خطا: " + e.getClass().getSimpleName());
             } finally {
                 busy = false;
+                if (currentNode == null) wakeRelease();
             }
         }, "manjar-custom");
         t.setDaemon(true);
@@ -1624,6 +1671,19 @@ public class VpnEngine {
         apiPort = findFreePort(API_PORT);
         relayPort = findFreePort(RELAY_PORT);
         if (!ensureXray()) throw new Exception("هسته Xray پیدا نشد");
+        // v1.8.4 — مقصدِ رله: آی‌پیِ حل‌شده (نه دامنه) تا اتصالِ نهایی وابسته به
+        // DNSِ لحظه‌ی اتصال نباشد؛ SNI/Host/Reality در کانفیگ همان دامنه می‌ماند.
+        // اگر آی‌پیِ پیش‌فیلتر نبود، همین‌جا با تایم‌اوتِ کوتاه حل می‌شود.
+        Subs.Node target = withResolvedIp(node);
+        String relayHost = target.server;
+        if (relayHost.equals(node.server) && !node.server.matches("^[0-9.]+$")) {
+            String freshIp = tcpAliveResolve(node.server, node.port);
+            if (freshIp != null) {
+                node.extra.put("ip", freshIp);
+                target = withResolvedIp(node);
+                relayHost = target.server;
+            }
+        }
         // رله‌ی محافظ — سوکتِ واقعی با protect باز می‌شود
         relay = new ProtRelay(new ProtRelay.Protector() {
             @Override public boolean protect(Socket s) {
@@ -1632,8 +1692,8 @@ public class VpnEngine {
             @Override public boolean protect(DatagramSocket s) {
                 return vpnSvc != null && vpnSvc.protectSocket(s);
             }
-        }, node.server, node.port, relayPort);
-        JSONObject cfg = Subs.buildXrayConfig(node, socksPort, apiPort, "127.0.0.1", relayPort);
+        }, relayHost, node.port, relayPort);
+        JSONObject cfg = Subs.buildXrayConfig(target, socksPort, apiPort, "127.0.0.1", relayPort);
         if (cfg == null) throw new Exception("ساخت کانفیگ برای این نود ممکن نشد");
         File tmp = new File(ctx.getCacheDir(), "manjarvpn_main.json");
         writeJson(cfg, tmp);
@@ -1918,6 +1978,7 @@ public class VpnEngine {
     // ============================ قطع اتصال ============================
     public void disconnectInternal(boolean notify) {
         stopMonitors();
+        wakeRelease();     // v1.8.4 — قطعِ اتصال = آزادسازیِ wake lock
         try { if (relay != null) relay.stop(); } catch (Exception ignored) {}
         relay = null;
         killProc(mainProc);

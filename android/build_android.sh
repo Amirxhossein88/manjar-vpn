@@ -7,7 +7,7 @@
 #   - هسته‌ی Xray اندروید arm64 (از ریلیزهای رسمی XTLS/Xray-core)
 #     → android/app/src/main/jniLibs/arm64-v8a/libxray.so
 #   - hev-socks5-tunnel: classes.jar (از AAR) و libhev-socks5-tunnel.so
-# خروجی: android/build/ManjarVPN-1.8.3-android.apk
+# خروجی: android/build/ManjarVPN-1.8.4-android.apk
 # =============================================================
 set -e
 
@@ -63,14 +63,21 @@ echo "== zipalign =="
 "$BT/zipalign" -f 4 "$OUT/base.apk" "$OUT/aligned.apk"
 
 echo "== sign =="
-KS="$ROOT/manjar.keystore"
+# v1.8.4 — FIX: از keystore موجودِ مخزن استفاده می‌شود (android/keystore/manjar.keystore)
+# تا امضای همه‌ی ریلیزها یکسان بماند و آپدیتِ APK روی نسخه‌ی قبلی نصب شود.
+# قبلاً مسیر اشتباه (android/manjar.keystore) هر بار یک کلیدِ «تازه» می‌ساخت →
+# امضای جدید با امضای نسخه‌ی نصب‌شده‌ی کاربر نمی‌خواند و اندروید اجازه‌ی آپدیت نمی‌داد.
+KS="$ROOT/keystore/manjar.keystore"
 KS_PASS="${KS_PASS:-manjar172026}"
-"$JDK/bin/keytool" -genkeypair -v -keystore "$KS" -alias manjar -keyalg RSA -keysize 2048 \
-  -validity 10950 -storepass "$KS_PASS" -keypass "$KS_PASS" \
-  -dname "CN=ManjarVPN, OU=Manjar, O=Manjar, L=Tehran, C=IR" 2>/dev/null || true
+if [ ! -f "$KS" ]; then
+  mkdir -p "$ROOT/keystore"
+  "$JDK/bin/keytool" -genkeypair -v -keystore "$KS" -alias manjar -keyalg RSA -keysize 2048 \
+    -validity 10950 -storepass "$KS_PASS" -keypass "$KS_PASS" \
+    -dname "CN=ManjarVPN, OU=Manjar, O=Manjar, L=Tehran, C=IR" 2>/dev/null || true
+fi
 "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
-  --out "$OUT/ManjarVPN-1.8.3-android.apk" "$OUT/aligned.apk"
-"$BT/apksigner" verify "$OUT/ManjarVPN-1.8.3-android.apk"
+  --out "$OUT/ManjarVPN-1.8.4-android.apk" "$OUT/aligned.apk"
+"$BT/apksigner" verify "$OUT/ManjarVPN-1.8.4-android.apk"
 
 echo "== done =="
-ls -la "$OUT/ManjarVPN-1.8.3-android.apk"
+ls -la "$OUT/ManjarVPN-1.8.4-android.apk"

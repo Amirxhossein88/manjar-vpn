@@ -19,7 +19,7 @@
 
 ## 📲 نصب
 
-1. فایل `ManjarVPN-1.8.0-android.apk` را از [Releases](https://github.com/Amirxhossein88/manjar-vpn/releases) دانلود کنید (اندروید ۷ به بالا — arm64).
+1. فایل `ManjarVPN-1.8.4-android.apk` را از [Releases](https://github.com/Amirxhossein88/manjar-vpn/releases) دانلود کنید (اندروید ۷ به بالا — arm64).
 2. اجازه‌ی «نصب از منابع ناشناس» را بدهید و نصب کنید.
 3. دفعه‌ی اول که «اتصال خودکار» را می‌زنید، اندروید پنجره‌ی اجازه‌ی VPN نشان می‌دهد — **اجازه دادن** را بزنید.
 
@@ -61,7 +61,7 @@ bash android/build_android.sh
 ```
 
 اسکریپت: aapt2 compile/link ← javac ← d8 ← بسته‌بندی ← zipalign ← apksigner.
-خروجی: `android/build/ManjarVPN-1.8.0-android.apk`
+خروجی: `android/build/ManjarVPN-1.8.4-android.apk`
 
 ## 🗂 ساختار
 
