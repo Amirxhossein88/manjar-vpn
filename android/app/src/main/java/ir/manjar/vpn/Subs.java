@@ -22,7 +22,7 @@ public final class Subs {
 
     // ===================== ثابت‌ها (یکسان با نسخه ویندوز) =====================
     public static final String APP_NAME = "ManjarVPN";
-    public static final String VERSION = "1.8.2";
+    public static final String VERSION = "1.8.3";
 
     public static final String[] SUBSCRIPTION_SOURCES = {
             // barry-far — دسته‌های اصلی
@@ -533,6 +533,12 @@ public final class Subs {
      * و حلقه‌ی TUN پیش نیاید. SNI و تنظیماتِ TLS همان سرور واقعی می‌مانند.
      */
     public static JSONObject buildOutbound(Node node, String connectHost, int connectPort) throws Exception {
+        return buildOutbound(node, connectHost, connectPort, "proxy");
+    }
+
+    /** مثل بالا، با تگِ دلخواه — برای کانفیگِ دسته‌ای (چند نود در یک هسته) لازم است. */
+    public static JSONObject buildOutbound(Node node, String connectHost, int connectPort,
+                                           String tag) throws Exception {
         Map<String, String> e = node.extra;
         String net = e.get("net");
         if (net == null || net.isEmpty()) net = "tcp";
@@ -599,7 +605,7 @@ public final class Subs {
         }
 
         JSONObject out = new JSONObject();
-        out.put("tag", "proxy");
+        out.put("tag", tag == null || tag.isEmpty() ? "proxy" : tag);
         JSONObject settings = new JSONObject();
         if (node.proto.equals("vmess")) {
             int aid = 0;
@@ -673,12 +679,11 @@ public final class Subs {
     /** پورتِ build_xray_config — اینباندِ socks + API آمار (v1.8). */
     public static JSONObject buildXrayConfig(Node node, int socksPort, int apiPort,
                                              String connectHost, int connectPort) throws Exception {
-        JSONObject outbound = buildOutbound(node, connectHost, connectPort);
+        JSONObject outbound = buildOutbound(node, connectHost, connectPort, "proxy");
         if (outbound == null) return null;
         JSONObject sniffing = new JSONObject();
         sniffing.put("enabled", true);
-        sniffing.put("destOverride", new JSONArray()
-                .put("http").put("tls").put("quic"));
+        sniffing.put("destOverride", new JSONArray().put("http").put("tls"));
         JSONArray inbounds = new JSONArray();
         JSONObject socksIn = new JSONObject();
         socksIn.put("tag", "socks-in");
@@ -714,11 +719,90 @@ public final class Subs {
                     .put("statsInboundUplink", true).put("statsInboundDownlink", true)
                     .put("statsOutboundUplink", true).put("statsOutboundDownlink", true));
             cfg.put("policy", policy);
-            cfg.put("routing", new JSONObject().put("rules", new JSONArray().put(
-                    new JSONObject().put("type", "field")
-                            .put("inboundTag", new JSONArray().put("api"))
-                            .put("outboundTag", "api"))));
+
+            // ===== v1.8.3 — معماریِ ویندوز در حالتِ TUN بازسازی شد =====
+            // ویندوز پروکسیِ سیستمی (TCP خالص) است: دامنه‌ها سمتِ سرور حل می‌شوند،
+            // QUIC اصلا در مسیر نیست. روی اندروید (TUN) باید همان رفتار ساخته شود:
+            //  ۱) DNS-hijack پورتِ 53 → ماژولِ DNS با DoH از داخلِ تونل (TCP) —
+            //     دیگر وابسته به UDPِ سرور نیست (برای تروجان/سرورهای بدونِ UDP هم کار می‌کند)
+            //     و با queryStrategy=UseIPv4 هیچ AAAA برنمی‌گردد → stallِ IPv6 حذف می‌شود.
+            //  ۲) بستنِ QUIC (UDP 443) → اپ‌ها فوراً روی TCP/TLS می‌افتند —
+            //     پایانِ کندیِ HTTP/3 روی سرورهای رایگان.
+            JSONObject dns = new JSONObject();
+            dns.put("queryStrategy", "UseIPv4");
+            dns.put("disableCache", false);
+            JSONArray dservers = new JSONArray();
+            dservers.put(new JSONObject().put("address", "https://1.1.1.1/dns-query"));
+            dservers.put(new JSONObject().put("address", "https://8.8.8.8/dns-query"));
+            dservers.put(new JSONObject().put("address", "https://1.1.1.1/dns-query")
+                    .put("detour", "direct"));
+            dns.put("servers", dservers);
+            cfg.put("dns", dns);
+
+            JSONArray rules = new JSONArray();
+            rules.put(new JSONObject().put("type", "field")
+                    .put("inboundTag", new JSONArray().put("api"))
+                    .put("outboundTag", "api"));
+            rules.put(new JSONObject().put("type", "field")
+                    .put("port", "53").put("network", "tcp,udp")
+                    .put("outboundTag", "dns-out"));
+            rules.put(new JSONObject().put("type", "field")
+                    .put("port", "443").put("network", "udp")
+                    .put("outboundTag", "block"));
+            cfg.put("routing", new JSONObject().put("rules", rules));
+
+            JSONArray outs = cfg.getJSONArray("outbounds");
+            // «direct» در بدنه‌ی اصلی کانفیگ قبلا اضافه شده است — فقط dns-out و block اضافه می‌شود
+            // (تگِ تکراری باعث می‌شود هسته اصلا بالا نیاید: "existing tag found: direct")
+            outs.put(new JSONObject().put("tag", "dns-out").put("protocol", "dns"));
+            outs.put(new JSONObject().put("tag", "block").put("protocol", "blackhole"));
         }
+        return cfg;
+    }
+
+    /**
+     * v1.8.3 — کانفیگِ «تستِ پینگِ دسته‌ای»: یک هسته‌ی Xray با N اینباند/اوت‌باند.
+     * هر نود اینباندِ socks خودش و اوت‌باندِ خودش را دارد و قاعده‌ی routing هر اینباند
+     * را به اوت‌باندِ همان نود می‌برد. به‌جای N پروسه‌ی Xray (~۳۶MB هرکدام)، یک پروسه —
+     * پینگِ گوشی چند برابر سریع‌تر. نگاشتِ نود→پورت در portOf برگردانده می‌شود
+     * (نودهای نامعتبر حذف می‌شوند و پورتی نمی‌گیرند).
+     */
+    public static JSONObject buildBatchLatencyConfig(List<Node> nodes, int basePort,
+                                                     Map<Node, Integer> portOf) throws Exception {
+        JSONArray inbounds = new JSONArray();
+        JSONArray outbounds = new JSONArray();
+        JSONArray rules = new JSONArray();
+        JSONObject sniffing = new JSONObject();
+        sniffing.put("enabled", true);
+        sniffing.put("destOverride", new JSONArray().put("http").put("tls"));
+        int kept = 0;
+        for (Node node : nodes) {
+            if (node == null) continue;
+            JSONObject outbound;
+            try { outbound = buildOutbound(node, node.server, node.port, "out" + kept); }
+            catch (Exception e) { outbound = null; }
+            if (outbound == null) continue;      // نودِ نامعتبر — فقط خودش حذف می‌شود
+            JSONObject in = new JSONObject();
+            in.put("tag", "in" + kept);
+            in.put("listen", "127.0.0.1");
+            in.put("port", basePort + kept);
+            in.put("protocol", "socks");
+            in.put("settings", new JSONObject().put("auth", "noauth").put("udp", false));
+            in.put("sniffing", sniffing);
+            inbounds.put(in);
+            outbounds.put(outbound);
+            rules.put(new JSONObject().put("type", "field")
+                    .put("inboundTag", new JSONArray().put("in" + kept))
+                    .put("outboundTag", "out" + kept));
+            if (portOf != null) portOf.put(node, basePort + kept);
+            kept++;
+        }
+        if (kept == 0) return null;
+        JSONObject cfg = new JSONObject();
+        cfg.put("log", new JSONObject().put("loglevel", "error"));
+        cfg.put("inbounds", inbounds);
+        cfg.put("outbounds", outbounds);
+        cfg.put("routing", new JSONObject().put("rules", rules));
         return cfg;
     }
 

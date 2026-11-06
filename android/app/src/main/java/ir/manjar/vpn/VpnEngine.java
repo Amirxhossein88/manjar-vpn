@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -61,14 +62,15 @@ public class VpnEngine {
     public static final int TCP_PREFILTER_WORKERS = 64;      // ویندوز ۲۰۰ — موبایلِ محافظه‌کارتر
     public static final double TCP_PREFILTER_TIMEOUT = 2.0;
     public static final int MAX_TEST_NODES = 1200;
-    public static final int MAX_XRAY_LATENCY_TESTS = 320;
+    public static final int MAX_XRAY_LATENCY_TESTS = 240;
     public static final int CONCURRENT_TESTS = 6;            // ویندوز ۱۴ — روی موبایل حافظه‌ی کمتر → Xrayِ همزمانِ کمتر (هر هسته ~۳۶MB)
+    public static final int LATENCY_BATCH = 8;               // v1.8.3 — هر هسته تا ۸ نود را همزمان تست می‌کند (۱ پروسه به‌جای ۸)
     public static final double XRAY_START_TIMEOUT = 4.0;     // ویندوز ۲ — فلشِ کندِ گوشی + بارِ صفحه‌ی ۳۶ مگابایتی → صبرِ بیشتر
     public static final int LATENCY_RETRY_MAX = 80;
     public static final double LATENCY_TIMEOUT = 5.0;
-    public static final int DEEP_POOL = 40;
+    public static final int DEEP_POOL = 30;
     public static final int DEEP_ROUNDS = 3;
-    public static final int DEEP_TARGET = 12;
+    public static final int DEEP_TARGET = 8;
     public static final int DEEP_WORKERS = 3;
     public static final double SITE_TIMEOUT = 6.0;
     public static final int TOP_SPEED_TESTS = 8;
@@ -545,47 +547,73 @@ public class VpnEngine {
     }
 
     // ============================ تستِ یک نود ============================
-    /** پینگ واقعی از داخل تونلِ همین کانفیگ (هر پاسخِ HTTP = زنده) — مثل test_latency ویندوز. */
-    public Double testLatency(Subs.Node node) {
-        if (stopFlag) return null;
-        int port = nextTestPort();
+    /**
+     * پینگِ دسته‌ای — v1.8.3: تا LATENCY_BATCH نود در «یک» هسته‌ی Xray.
+     * هر نود اینباندِ socks اختصاصی (پورتِ جدا) و اوت‌باندِ اختصاصی دارد؛
+     * راه‌اندازیِ سردِ هسته (روی گوشی ۱ تا ۳ ثانیه) فقط یک بار در هر دسته پرداخت
+     * می‌شود، نه به ازای هر نود — برای همین «وصل شدن» روی گوشی چند برابر سریع‌تر است.
+     * خروجی: فقط نودهایی که جواب دادند (نگاشتِ نود→پینگ).
+     */
+    private Map<Subs.Node, Double> latencyTestBatch(List<Subs.Node> chunk) {
+        Map<Subs.Node, Double> out = new HashMap<>();
+        if (chunk.isEmpty() || stopFlag) return out;
+        int base = nextTestPort();
+        List<Subs.Node> resolved = new ArrayList<>();
+        for (Subs.Node n : chunk) resolved.add(withResolvedIp(n));
+        Map<Subs.Node, Integer> portOf = new HashMap<>();
         JSONObject cfg;
-        try { cfg = Subs.buildXrayConfig(withResolvedIp(node), port, 0, node.server, node.port); }
-        catch (Exception e) { return null; }
-        if (cfg == null) return null;
-        File tmp = new File(ctx.getCacheDir(), "manjarvpn_lat_" + port + ".json");
+        try { cfg = Subs.buildBatchLatencyConfig(resolved, base, portOf); }
+        catch (Exception e) { return out; }
+        if (cfg == null || portOf.isEmpty()) return out;
+        File tmp = new File(ctx.getCacheDir(), "manjarvpn_latb_" + base + ".json");
         Process proc = null;
         try {
             writeJson(cfg, tmp);
-            proc = startXray(tmp.getAbsolutePath(), "lat");
-            if (proc == null) return null;
+            proc = startXray(tmp.getAbsolutePath(), "latb");
+            if (proc == null) return out;
             testProcs.add(proc);
-            if (!waitPort(port, XRAY_START_TIMEOUT)) {
+            if (!waitPort(base, XRAY_START_TIMEOUT)) {
                 funnel("xray_start_fail", lastXrayErr.isEmpty() ? "هسته بالا نیامد" : lastXrayErr);
                 if (!xrayStartFailLogged) {
                     xrayStartFailLogged = true;
                     log("✗ هسته‌ی Xray بالا نیامد" + (lastXrayErr.isEmpty() ? "" : ": " + lastXrayErr));
                 }
-                return null;
+                return out;
             }
-            long t0 = System.currentTimeMillis();
-            try {
-                int code = httpGetViaSocks(port, "cp.cloudflare.com", "/generate_204", "cp.cloudflare.com",
-                        (int) (LATENCY_TIMEOUT * 1000));
-                if (code < 500) return (double) (System.currentTimeMillis() - t0);
-            } catch (Exception e) {
-                if (stopFlag) return null;
+            ExecutorService ex = Executors.newFixedThreadPool(Math.min(chunk.size(), LATENCY_BATCH));
+            Map<Subs.Node, java.util.concurrent.Future<Double>> futs = new LinkedHashMap<>();
+            for (final Subs.Node n : chunk) {
+                final Integer p = portOf.get(n);
+                if (p == null) continue;
+                futs.put(n, ex.submit(() -> {
+                    long t0 = System.currentTimeMillis();
+                    try {
+                        int code = httpGetViaSocks(p, "cp.cloudflare.com", "/generate_204",
+                                "cp.cloudflare.com", (int) (LATENCY_TIMEOUT * 1000));
+                        if (code < 500) return (double) (System.currentTimeMillis() - t0);
+                    } catch (Exception e) {
+                        if (stopFlag) return null;
+                    }
+                    // اندپوینتِ دوم (v1.7)
+                    try {
+                        long t1 = System.currentTimeMillis();
+                        int code = httpsGetViaSocks(p, "www.gstatic.com", "/generate_204",
+                                (int) (LATENCY_TIMEOUT * 1000));
+                        if (code < 500) return (double) (System.currentTimeMillis() - t1);
+                    } catch (Exception ignored) {}
+                    return null;
+                }));
             }
-            // اندپوینتِ دوم (v1.7)
-            try {
-                long t1 = System.currentTimeMillis();
-                int code = httpsGetViaSocks(port, "www.gstatic.com", "/generate_204",
-                        (int) (LATENCY_TIMEOUT * 1000));
-                if (code < 500) return (double) (System.currentTimeMillis() - t1);
-            } catch (Exception ignored) {}
-            return null;
+            ex.shutdown();
+            for (Map.Entry<Subs.Node, java.util.concurrent.Future<Double>> en : futs.entrySet()) {
+                try {
+                    Double r = en.getValue().get(45, java.util.concurrent.TimeUnit.SECONDS);
+                    if (r != null) out.put(en.getKey(), r);
+                } catch (Exception ignored) {}
+            }
+            return out;
         } catch (Exception e) {
-            return null;
+            return out;
         } finally {
             if (proc != null) killProc(proc);
             testProcs.remove(proc);
@@ -927,6 +955,15 @@ public class VpnEngine {
             log("  اگر سرعت عملاً صفر باشد، نگهبانِ برنامه خودش سرور را عوض می‌کند.");
         }
 
+        // v1.8.3 — مثل main.py ویندوز: پس از اسکن، سرورهای تست‌شده به پنلِ رابط داده می‌شوند
+        // (تاییدشده‌ها اول، بعد سرعت بیشتر، بعد پینگ کمتر) — قبلا فقط مسیرِ حافظه این را می‌داد
+        // و پنلِ «سرورهای تست‌شده» بعد از یک تستِ کاملِ موفق هم خالی می‌ماند.
+        List<Subs.Node> rankedScan = new ArrayList<>(latOk);
+        rankVerifiedFirst(rankedScan);
+        topNodes.clear();
+        topNodes.addAll(rankedScan.subList(0, Math.min(12, rankedScan.size())));
+        ev("topnodes", "nodes", nodesToJson(topNodes));
+
         // گزارشِ قیف
         StringBuilder rs = new StringBuilder();
         List<Map.Entry<String, Integer>> rl = new ArrayList<>(reasonsMap.entrySet());
@@ -985,26 +1022,28 @@ public class VpnEngine {
 
     private List<Subs.Node> latencyPass(List<Subs.Node> pool) { return latencyPass(pool, 0); }
 
+    /** v1.8.3 — پینگِ دسته‌ای: هر بار یک هسته تا ۸ نود؛ منطقِ تلاشِ مجدد مثل قبل. */
     private List<Subs.Node> latencyPass(List<Subs.Node> pool, int depth) {
         List<Subs.Node> okList = Collections.synchronizedList(new ArrayList<>());
         List<Subs.Node> failList = Collections.synchronizedList(new ArrayList<>());
         AtomicInteger done = new AtomicInteger();
-        ExecutorService ex = Executors.newFixedThreadPool(CONCURRENT_TESTS);
-        for (Subs.Node n : pool) {
-            ex.submit(() -> {
-                if (stopFlag) return;
-                Double r = testLatency(n);
+        int total = pool.size();
+        for (int start = 0; start < total; start += LATENCY_BATCH) {
+            if (stopFlag) break;
+            List<Subs.Node> chunk = new ArrayList<>(
+                    pool.subList(start, Math.min(start + LATENCY_BATCH, total)));
+            Map<Subs.Node, Double> res = latencyTestBatch(chunk);
+            for (Subs.Node n : chunk) {
+                Double r = res.get(n);
                 int d = done.incrementAndGet();
                 if (r != null) {
                     n.latency = r;
                     okList.add(n);
                 } else failList.add(n);
-                if (d % 10 == 0 || d == pool.size())
-                    progress("latency", d, pool.size(), "تست پینگ " + d + "/" + pool.size() + " — " + okList.size() + " کانفیگ سالم");
-            });
+                if (d % 10 == 0 || d == total)
+                    progress("latency", d, total, "تست پینگ " + d + "/" + total + " — " + okList.size() + " کانفیگ سالم");
+            }
         }
-        ex.shutdown();
-        try { ex.awaitTermination(600, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception ignored) {}
         // v1.7: ردها یک بار دیگر امتحان می‌شوند (فقط یک‌بار — نه بازگشتی)
         if (!failList.isEmpty() && failList.size() <= LATENCY_RETRY_MAX && !stopFlag && depth == 0) {
             log("↻ " + failList.size() + " کانفیگِ ردشده یک بار دیگر امتحان می‌شوند…");
@@ -1093,61 +1132,118 @@ public class VpnEngine {
     }
 
     // ============================ نجات هوش مصنوعی ============================
+    /**
+     * v1.8.3 — اول مستقیم (مثل ویندوز)؛ اگر جواب نداد — در ایران دسترسیِ مستقیم به
+     * سرویس‌های هوش مصنوعی اغلب بسته است — از داخلِ «تونلِ موقت» با بهترینِ سرورِ
+     * شناخته‌شده‌ی حافظه (تا ۲ نود) دوباره تلاش می‌کند. تونلِ VPN در مرحله‌ی نجات
+     * هنوز بالا نیست، پس هسته‌ی موقت بدونِ رله/protect امن است.
+     */
     private String aiAsk(String prompt) {
-        for (String model : new String[]{Subs.POLLINATIONS_MODEL, "openai"}) {
-            if (stopFlag) return null;
-            try {
-                URL u = new URL(Subs.POLLINATIONS_URL);
-                HttpURLConnection c = (HttpURLConnection) u.openConnection();
-                c.setRequestMethod("POST");
-                c.setConnectTimeout(10000);
-                c.setReadTimeout(Subs.AI_RESCUE_TIMEOUT_MS);
-                c.setDoOutput(true);
-                c.setRequestProperty("Content-Type", "application/json");
-                JSONObject body = new JSONObject();
-                body.put("messages", new JSONArray().put(
-                        new JSONObject().put("role", "user").put("content", prompt)));
-                body.put("model", model);
-                body.put("referrer", Subs.APP_NAME);
-                body.put("seed", rnd.nextInt(1_000_000) + 1);
-                if (model.equals(Subs.POLLINATIONS_MODEL)) body.put("reasoning_effort", "low");
-                OutputStream os = c.getOutputStream();
-                os.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                os.close();
-                int code = c.getResponseCode();
-                if (code < 400) {
-                    InputStream is = code < 400 ? c.getInputStream() : c.getErrorStream();
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while (is != null && (n = is.read(buf)) > 0) bos.write(buf, 0, n);
-                    if (is != null) is.close();
-                    String text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
-                    if (!text.trim().isEmpty()) {
-                        log("🤖 پاسخ از هوش مصنوعی رایگان گرفته شد (مدل: " + model + ")");
-                        return text;
-                    }
-                } else {
-                    String msg = "";
-                    try {
-                        InputStream es = c.getErrorStream();
-                        if (es != null) {
-                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                            byte[] buf = new byte[4096];
-                            int n;
-                            while ((n = es.read(buf)) > 0) bos.write(buf, 0, n);
-                            es.close();
-                            msg = new String(bos.toByteArray(), StandardCharsets.UTF_8);
-                            try { msg = new JSONObject(msg).optJSONObject("error").optString("message"); }
-                            catch (Exception ignored) { if (msg.length() > 120) msg = msg.substring(0, 120); }
-                        }
-                    } catch (Exception ignored) {}
-                    log("✗ هوش مصنوعی رایگان (" + model + ") خطا " + code + ": " + msg);
-                }
-                c.disconnect();
-            } catch (Exception ignored) {}
+        String r = aiAskVia(null, prompt);
+        if (r != null) return r;
+        if (stopFlag) return null;
+        int tried = 0;
+        for (JSONObject e : loadCache()) {
+            if (stopFlag || tried >= 2) break;
+            Subs.Node n = Subs.parseUri(e.optString("uri"));
+            if (n == null) continue;
+            String ip = tcpAliveResolve(n.server, n.port);
+            if (ip == null) continue;                 // سرورِ حافظه هم زنده نیست
+            n.extra.put("ip", ip);
+            tried++;
+            log("🤖 مسیرِ مستقیم جواب نداد — از تونلِ موقت با سرورِ شناخته‌شده…");
+            r = aiAskVia(withResolvedIp(n), prompt);
+            if (r != null) return r;
         }
         return null;
+    }
+
+    /** پرس‌وجو از سرویسِ رایگان — با پروکسیِ اختیاری (NO_PROXY = مستقیم). */
+    private String aiAskVia(Subs.Node viaNode, String prompt) {
+        int tmpPort = 0;
+        Process proc = null;
+        File tmpCfg = null;
+        java.net.Proxy proxy = java.net.Proxy.NO_PROXY;
+        try {
+            if (viaNode != null) {
+                if (!ensureXray()) return null;
+                tmpPort = findFreePort(27000 + rnd.nextInt(2000));
+                JSONObject cfg;
+                try { cfg = Subs.buildXrayConfig(viaNode, tmpPort, 0, viaNode.server, viaNode.port); }
+                catch (Exception e) { return null; }
+                if (cfg == null) return null;
+                tmpCfg = new File(ctx.getCacheDir(), "manjarvpn_ai_" + tmpPort + ".json");
+                writeJson(cfg, tmpCfg);
+                proc = startXray(tmpCfg.getAbsolutePath(), "ai");
+                if (proc == null) return null;
+                if (!waitPort(tmpPort, XRAY_START_TIMEOUT)) return null;
+                proxy = new java.net.Proxy(java.net.Proxy.Type.SOCKS,
+                        new InetSocketAddress("127.0.0.1", tmpPort));
+            }
+            for (String model : new String[]{Subs.POLLINATIONS_MODEL, "openai"}) {
+                if (stopFlag) return null;
+                HttpURLConnection c = null;
+                try {
+                    URL u = new URL(Subs.POLLINATIONS_URL);
+                    c = (HttpURLConnection) (proxy == java.net.Proxy.NO_PROXY
+                            ? u.openConnection() : u.openConnection(proxy));
+                    c.setRequestMethod("POST");
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(Subs.AI_RESCUE_TIMEOUT_MS);
+                    c.setDoOutput(true);
+                    c.setRequestProperty("Content-Type", "application/json");
+                    JSONObject body = new JSONObject();
+                    body.put("messages", new JSONArray().put(
+                            new JSONObject().put("role", "user").put("content", prompt)));
+                    body.put("model", model);
+                    body.put("referrer", Subs.APP_NAME);
+                    body.put("seed", rnd.nextInt(1_000_000) + 1);
+                    if (model.equals(Subs.POLLINATIONS_MODEL)) body.put("reasoning_effort", "low");
+                    OutputStream os = c.getOutputStream();
+                    os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                    os.close();
+                    int code = c.getResponseCode();
+                    if (code < 400) {
+                        InputStream is = c.getInputStream();
+                        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while (is != null && (n = is.read(buf)) > 0) bos.write(buf, 0, n);
+                        if (is != null) is.close();
+                        String text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                        if (!text.trim().isEmpty()) {
+                            log("🤖 پاسخ از هوش مصنوعی رایگان گرفته شد (مدل: " + model + ")");
+                            return text;
+                        }
+                    } else {
+                        String msg = "";
+                        try {
+                            InputStream es = c.getErrorStream();
+                            if (es != null) {
+                                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                                byte[] buf = new byte[4096];
+                                int n;
+                                while ((n = es.read(buf)) > 0) bos.write(buf, 0, n);
+                                es.close();
+                                msg = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                                try { msg = new JSONObject(msg).optJSONObject("error").optString("message"); }
+                                catch (Exception ignored) { if (msg.length() > 120) msg = msg.substring(0, 120); }
+                            }
+                        } catch (Exception ignored) {}
+                        log("✗ هوش مصنوعی رایگان (" + model + ") خطا " + code + ": " + msg);
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    if (c != null) try { c.disconnect(); } catch (Exception ignored) {}
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (proc != null) killProc(proc);
+            if (tmpCfg != null) try { tmpCfg.delete(); } catch (Exception ignored) {}
+        }
     }
 
     public List<Subs.Node> aiRescue(int fetched, int tcpAlive, int latencyOk, int verified,
@@ -1430,17 +1526,7 @@ public class VpnEngine {
         log("⚡ " + nodes.size() + " سرور خوب قبلی در حافظه — تست سریع…");
         List<Subs.Node> alive = tcpPrefilter(nodes);
         if (stopFlag || alive.isEmpty()) return null;
-        List<Subs.Node> latOk = Collections.synchronizedList(new ArrayList<>());
-        ExecutorService ex = Executors.newFixedThreadPool(Math.min(20, CONCURRENT_TESTS + 6));
-        for (Subs.Node n : alive) {
-            ex.submit(() -> {
-                if (stopFlag) return;
-                Double r = testLatency(n);
-                if (r != null) { n.latency = r; latOk.add(n); }
-            });
-        }
-        ex.shutdown();
-        try { ex.awaitTermination(240, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception ignored) {}
+        List<Subs.Node> latOk = latencyPass(alive);
         if (stopFlag || latOk.isEmpty()) return null;
         latOk.sort((a, b) -> Double.compare(a.latency, b.latency));
         List<Subs.Node> top = latOk.subList(0, Math.min(3, latOk.size()));

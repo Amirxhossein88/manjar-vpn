@@ -849,8 +849,13 @@ function drawWheel(){
     ctx.strokeStyle=BG;ctx.lineWidth=2;ctx.stroke();
     var mid=(wheelAngle+i*seg+seg/2)*Math.PI/180;
     var tx=cx+Math.cos(mid)*r*.66, ty=cy+Math.sin(mid)*r*.66;
-    ctx.fillStyle='#fff';ctx.font='bold 13px Vazirmatn, sans-serif';
+    ctx.fillStyle='#fff';
+    // v1.8.3 — فونت با جایگزینِ صریح + ضخامتی‌سازی: در برخی WebViewها متنِ کانواس
+    // قبل از لودِ فونت وب اصلا رسم نمی‌شود؛ با Tahoma/سیستمی همیشه متن دیده می‌شود.
+    ctx.font='bold 14px Vazirmatn, Tahoma, sans-serif';
     ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.lineWidth=2.5;ctx.strokeStyle='rgba(12,16,34,.6)';
+    ctx.strokeText(WHEEL_SEGS[i][0],tx,ty);
     ctx.fillText(WHEEL_SEGS[i][0],tx,ty);
   }
   ctx.beginPath();ctx.arc(cx,cy,42,0,Math.PI*2);
@@ -865,6 +870,8 @@ function openWheel(){
   try{if(JSON.parse(Manjar.state()).wheelDone)return}catch(e){}
   $('wheelModal').classList.add('show');
   drawWheel();
+  // v1.8.3 — یک رسمِ دیرتر: اگر فونت/لی‌اوت هنوز در حال لود بود، متن‌ها بعدش می‌نشینند
+  setTimeout(function(){try{if($('wheelModal').classList.contains('show'))drawWheel()}catch(e){}},400);
 }
 function spinWheel(){
   if(spinning)return;
@@ -915,6 +922,9 @@ $('wheelBtn').addEventListener('click',function(){
   if($('wheelBtn').classList.contains('claim'))claimWheel();else spinWheel();
 });
 $('wheelClose').addEventListener('click',skipWheel);
+/* v1.8.3 — بعد از آماده‌شدن فونت هم یک‌بار رسم می‌شود (متن‌های گردونه هیچ‌وقت خالی نمی‌ماند) */
+if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){try{drawWheel()}catch(e){}});}
+setTimeout(function(){try{drawWheel()}catch(e){}},1200);
 
 /* ================= راهنما ================= */
 

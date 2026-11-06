@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.provider.Settings;
 import android.view.View;
 import android.view.Window;
 import android.webkit.JavascriptInterface;
@@ -32,6 +33,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_VPN = 401;
     private static final int REQ_NOTIF = 402;
+    private static final int REQ_WRITE_SETTINGS = 403;
 
     private WebView web;
     private ManjarVpnService svc;
@@ -41,6 +43,7 @@ public class MainActivity extends Activity {
     private String pendingAction = null;   // auto | custom | node
     private String pendingCustomText = null;
     private Subs.Node pendingNode = null;
+    private Runnable pendingWsTask = null; // v1.8.3 — بعد از برگشت از صفحه‌ی WRITE_SETTINGS
     private final JSONArray logBuffer = new JSONArray();
 
     private final ServiceConnection conn = new ServiceConnection() {
@@ -158,8 +161,12 @@ public class MainActivity extends Activity {
             ui(() -> {
                 account.addCredit(mb, "wheel", true);
                 account.setWheelDone(mb);
-                engine.log("🎁 جایزه‌ی گردونه فعال شد — اعتبار اولیه شارژ شد.");
+                if (engine != null)
+                    engine.log("🎁 جایزه‌ی گردونه فعال شد — اعتبار اولیه شارژ شد.");
                 pushEvent("usage", account.snapshot());
+                // v1.8.3 — ذخیره‌ی ماندگار: با مجوزِ WRITE_SETTINGS در Settings.System
+                // هم نوشته می‌شود تا بعد از حذفِ نصب، گردونه/اعتبار برنگردد.
+                ensureWriteSettings(account::save);
             });
         }
 
@@ -167,7 +174,9 @@ public class MainActivity extends Activity {
         public void wheelSkip() {
             ui(() -> {
                 account.setWheelDone(0);
-                engine.log("ℹ گردونه رد شد — اعتبار پیش‌فرض ۵۰۰ مگابایت فعال است.");
+                if (engine != null)
+                    engine.log("ℹ گردونه رد شد — اعتبار پیش‌فرض ۵۰۰ مگابایت فعال است.");
+                ensureWriteSettings(account::save);
             });
         }
 
@@ -282,6 +291,26 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** v1.8.3 — اگر مجوزِ WRITE_SETTINGS نیست، یک‌بار صفحه‌ی رسمی اندروید باز می‌شود؛
+     *  این مجوزِ «مخصوص» است و برخلاف مجوزهای معمولی، بعد از حذفِ نصبِ داده‌ها را
+     *  در Settings.System زنده نگه می‌دارد. اگر کاربر نپذیرد، همون لایه‌های قبلی استفاده می‌شود. */
+    private void ensureWriteSettings(Runnable after) {
+        try {
+            if (Settings.System.canWrite(this)) {
+                after.run();
+                return;
+            }
+            pendingWsTask = after;
+            Intent i = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    Uri.parse("package:" + getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivityForResult(i, REQ_WRITE_SETTINGS);
+        } catch (Exception e) {
+            pendingWsTask = null;
+            after.run();
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -297,6 +326,10 @@ public class MainActivity extends Activity {
                 pendingCustomText = null;
                 pendingNode = null;
             }
+        } else if (requestCode == REQ_WRITE_SETTINGS) {
+            Runnable r = pendingWsTask;
+            pendingWsTask = null;
+            if (r != null) r.run();   // حتی اگر رد شد — save() فقط لایه‌های معمولی می‌نویسد
         }
     }
 

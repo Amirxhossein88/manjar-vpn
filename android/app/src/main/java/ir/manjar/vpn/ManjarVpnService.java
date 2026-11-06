@@ -90,6 +90,9 @@ public class ManjarVpnService extends VpnService {
         Builder b = new Builder()
                 .setMtu(8500)
                 .addAddress("198.18.0.1", 32)
+                // v1.8.3: IPv6 واقعا داخلِ تونل سرو می‌شود (قبلا مسیرِ ::/0 باز بود ولی hev
+                // آدرسِ v6 نداشت → بسته‌های v6 سیاه‌چاله می‌شدند → اپ‌های v6-پسند کند/گرفتار)
+                .addAddress("fdfe:dcba:9876::1", 126)
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
                 .addDnsServer("1.1.1.1")
@@ -113,12 +116,16 @@ public class ManjarVpnService extends VpnService {
         y.append("  name: hev-tun\n");
         y.append("  mtu: 8500\n");
         y.append("  ipv4: 198.18.0.1\n");
+        // v1.8.3: کتابخانه‌ی hev موجود از IPv6 پشتیبانی می‌کند (hev_config_get_tunnel_ipv6_address)
+        y.append("  ipv6: fdfe:dcba:9876::1\n");
         y.append("socks5:\n");
         y.append("  port: ").append(engine.socksPort).append("\n");
         y.append("  address: 127.0.0.1\n");
         y.append("  udp: 'udp'\n");
         y.append("misc:\n");
         y.append("  log-level: warn\n");
+        y.append("  task-stack-size: 24576\n");
+        y.append("  connect-timeout: 10000\n");
         File cfgFile = new File(getFilesDir(), "hev_tun.yaml");
         FileOutputStream fos = new FileOutputStream(cfgFile);
         fos.write(y.toString().getBytes(StandardCharsets.UTF_8));

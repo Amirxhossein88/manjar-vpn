@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 
 import org.json.JSONObject;
 
@@ -33,6 +34,10 @@ public class AccountStore {
 
     private static final String PREFS = "manjar_account";
     private static final String KEY = "account_json";
+    // v1.8.3 — پنجمین لایه‌ی ذخیره: Settings.System. فقط با مجوزِ WRITE_SETTINGS نوشته می‌شود
+    // ولی بعد از حذفِ نصب هم پاک نمی‌شود (برخلاف SharedPreferences و فایلِ MediaStore که
+    // اندروید بعد از حذفِ برنامه حذفشان می‌کند) → گردونه/اعتبار بعد از نصبِ مجدد برنمی‌گردد.
+    private static final String SYS_KEY = "manjar_account_v1";
 
     private final Context ctx;
     private final Object lock = new Object();
@@ -95,28 +100,72 @@ public class AccountStore {
             // نسخه‌ی آینه‌ای عمومی — اگر تازه‌تر بود (مثلا بعد از نصبِ مجدد) همان معتبر است
             JSONObject mirror = readPublicMirror();
             if (mirror != null) {
-                String mu = mirror.optString("updated", "");
-                if (!mu.isEmpty() && (updated.isEmpty() || mu.compareTo(updated) > 0)) {
-                    double newCredit = mirror.optDouble("credit_mb", 0);
-                    double oldCredit = creditMb;
-                    fromJson(mirror);
-                    // اعتبار هرگز کم نشود (ترکیبِ امن)
-                    if (newCredit > oldCredit) creditMb = newCredit;
-                    usedBytes = Math.max(usedBytes, mirror.optLong("used_bytes", 0));
-                    wheelDone = wheelDone || mirror.optBoolean("wheel_done", false);
-                }
+                mergeNewer(mirror);
+            }
+            // v1.8.3 — لایه‌ی Settings.System: تنها محلِ واقعا پایدار بعد از حذفِ نصب
+            JSONObject sys = readSystemAccount();
+            if (sys != null) {
+                mergeNewer(sys);
             }
             save();
         }
     }
 
+    /** ادغامِ امنِ یک نسخه‌ی جدیدتر — اعتبار هرگز کم نمی‌شود، گردونه اگر خورده بود برنمی‌گردد. */
+    private void mergeNewer(JSONObject incoming) {
+        String mu = incoming.optString("updated", "");
+        if (mu.isEmpty() || (!updated.isEmpty() && mu.compareTo(updated) <= 0)) return;
+        double newCredit = incoming.optDouble("credit_mb", 0);
+        double oldCredit = creditMb;
+        long oldUsed = usedBytes;
+        boolean oldWheel = wheelDone;
+        fromJson(incoming);
+        // ترکیبِ امن: اعتبارِ بیشتر می‌ماند؛ گردونه اگر در هر لایه‌ای مصرف شده بود،
+        // دیگر دوباره نمایش داده نمی‌شود (wheel_done = OR).
+        creditMb = Math.max(oldCredit, newCredit);
+        usedBytes = Math.max(oldUsed, usedBytes);
+        wheelDone = wheelDone || oldWheel;
+    }
+
     public void save() {
         synchronized (lock) {
+            updated = nowStamp();   // v1.8.3: قبلا هیچ‌وقت ست نمی‌شد → لایه‌ی آینه هرگز بازنمی‌گشت
             try {
                 ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                         .edit().putString(KEY, toJson().toString()).apply();
             } catch (Exception ignored) {}
             writePublicMirror();
+            writeSystemAccount();
+        }
+    }
+
+    private static String nowStamp() {
+        try {
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss 'UTC'", java.util.Locale.US);
+            f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            return f.format(new java.util.Date());
+        } catch (Exception e) {
+            return String.valueOf(System.currentTimeMillis());
+        }
+    }
+
+    // ---------- لایه‌ی Settings.System (پایدار بعد از حذفِ نصب — v1.8.3) ----------
+    private void writeSystemAccount() {
+        try {
+            if (Settings.System.canWrite(ctx)) {
+                Settings.System.putString(ctx.getContentResolver(), SYS_KEY, toJson().toString());
+            }
+        } catch (Exception ignored) {}   // اگر OS اجازه‌ی کلیدِ سفارشی نداد — لایه‌های دیگر کافی‌اند
+    }
+
+    private JSONObject readSystemAccount() {
+        try {
+            String s = Settings.System.getString(ctx.getContentResolver(), SYS_KEY);
+            if (s == null || s.isEmpty()) return null;
+            return new JSONObject(s);
+        } catch (Exception e) {
+            return null;
         }
     }
 

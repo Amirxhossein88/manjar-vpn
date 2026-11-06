@@ -7,7 +7,7 @@
 #   - هسته‌ی Xray اندروید arm64 (از ریلیزهای رسمی XTLS/Xray-core)
 #     → android/app/src/main/jniLibs/arm64-v8a/libxray.so
 #   - hev-socks5-tunnel: classes.jar (از AAR) و libhev-socks5-tunnel.so
-# خروجی: android/build/ManjarVPN-1.8.2-android.apk
+# خروجی: android/build/ManjarVPN-1.8.3-android.apk
 # =============================================================
 set -e
 
@@ -69,8 +69,8 @@ KS_PASS="${KS_PASS:-manjar172026}"
   -validity 10950 -storepass "$KS_PASS" -keypass "$KS_PASS" \
   -dname "CN=ManjarVPN, OU=Manjar, O=Manjar, L=Tehran, C=IR" 2>/dev/null || true
 "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
-  --out "$OUT/ManjarVPN-1.8.2-android.apk" "$OUT/aligned.apk"
-"$BT/apksigner" verify "$OUT/ManjarVPN-1.8.2-android.apk"
+  --out "$OUT/ManjarVPN-1.8.3-android.apk" "$OUT/aligned.apk"
+"$BT/apksigner" verify "$OUT/ManjarVPN-1.8.3-android.apk"
 
 echo "== done =="
-ls -la "$OUT/ManjarVPN-1.8.2-android.apk"
+ls -la "$OUT/ManjarVPN-1.8.3-android.apk"
