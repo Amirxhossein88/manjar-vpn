@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>ManjarVPN</title>
+<style>
+/* ================= فونت ================= */
+@font-face{font-family:'Vazirmatn';src:url('fonts/vazir.woff2') format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Vazirmatn';src:url('fonts/vazirm.woff2') format('woff2');font-weight:500;font-display:swap}
+@font-face{font-family:'Vazirmatn';src:url('fonts/vazirb.woff2') format('woff2');font-weight:700;font-display:swap}
+
+/* ================= توکن‌ها ================= */
+:root{
+  --bg:#0c1022; --card:#141a33; --card-h:#1a2140; --border:#232c52;
+  --txt:#eef1fb; --dim:#8b93b8; --green:#22c55e; --green-dim:#16a34a;
+  --blue:#3b82f6; --violet:#8b5cf6; --amber:#d97706; --red:#dc2626; --cyan:#7dd3fc;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--txt);
+  font-family:'Vazirmatn','Noto Naskh Arabic',sans-serif;
+  overflow-x:hidden; user-select:none;
+}
+input,textarea{user-select:text;font-family:inherit}
+.hidden{display:none !important}
+
+.wrap{max-width:560px;margin:0 auto;padding:12px 14px 20px}
+
+/* ================= اسپلش (۷ ثانیه) ================= */
+#splash{
+  position:fixed;inset:0;z-index:100;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  animation:splashIn .35s ease;
+}
+@keyframes splashIn{from{opacity:0}to{opacity:1}}
+#splash img{width:128px;height:128px;margin-bottom:4px}
+#splash .t1{font-size:30px;font-weight:700}
+#splash .t2{font-size:12px;color:var(--dim);margin:2px 0 24px}
+#splash .dots{display:flex;gap:6px;margin-bottom:26px}
+#splash .dots span{font-size:16px;color:#243048;transition:color .3s}
+#splash .bar{width:240px;height:6px;background:var(--card-h);border-radius:3px;overflow:hidden;margin-bottom:8px}
+#splash .bar i{display:block;height:100%;width:40%;background:var(--blue);border-radius:3px;animation:sweep 1.6s ease-in-out infinite}
+@keyframes sweep{0%{transform:translateX(260%)}100%{transform:translateX(-160%)}}
+#splash .msg{font-size:12px;color:var(--dim);min-height:18px}
+#splash .ver{position:absolute;bottom:12px;font-size:10px;color:#5d6a7e}
+
+/* ================= هدر ================= */
+.head{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+.head .menu{
+  width:42px;height:40px;border-radius:12px;background:var(--card);border:none;color:var(--txt);
+  font-size:18px;font-weight:700;cursor:pointer;flex-shrink:0;
+}
+.head .menu:active{background:var(--card-h)}
+.head .mid{flex:1;display:flex;align-items:center;gap:10px;justify-content:center}
+.head .mid img{width:52px;height:52px}
+.head .mid b{font-size:28px;font-weight:700}
+.head .ver{font-size:11px;color:var(--dim)}
+.subline{text-align:center;font-size:12px;color:var(--dim);margin-bottom:10px}
+
+/* ================= کارت‌ها ================= */
+.card{background:var(--card);border:1px solid var(--border);border-radius:18px}
+.status-card{border-color:#1f7a6a;padding:12px;margin-bottom:8px;position:relative}
+.status-inner{display:flex;align-items:center;justify-content:center;gap:8px}
+#dot{font-size:20px;color:var(--green);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
+#statusText{font-size:18px;font-weight:700;color:var(--green)}
+#spinner{
+  position:absolute;right:16px;top:50%;transform:translateY(-50%);
+  width:26px;height:26px;border:3px solid transparent;border-top-color:var(--cyan);
+  border-radius:50%;animation:spin 1s linear infinite;display:none;
+}
+@keyframes spin{to{transform:translateY(-50%) rotate(360deg)}}
+
+.server-card{display:flex;align-items:center;padding:12px 14px;margin-bottom:8px;cursor:pointer}
+.server-card .flag{font-size:26px;width:44px;text-align:center}
+.server-card .box{flex:1;text-align:center;min-width:0}
+.server-card .nm{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.server-card .sb{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.server-card .chev{font-size:22px;color:var(--dim);width:40px;text-align:center}
+
+.stats{display:flex;gap:8px;margin-bottom:8px}
+.stats .sc{flex:1;background:var(--card);border:1px solid var(--border);border-radius:16px;text-align:center;padding:10px 4px 12px}
+.stats .lb{font-size:12px;color:var(--dim)}
+.stats .vl{font-size:19px;font-weight:700;margin-top:2px}
+
+.prog{margin-bottom:8px}
+.prog .bar{height:8px;background:var(--card-h);border-radius:4px;overflow:hidden}
+.prog .bar i{display:block;height:100%;width:0;background:var(--blue);border-radius:4px;transition:width .3s ease}
+.prog .ph{font-size:11px;color:var(--dim);text-align:center;margin-top:4px;min-height:16px}
+
+/* ================= کارت مصرف حجم ================= */
+.quota-card{padding:10px 14px;margin:2px 0 8px}
+.quota-card.ok{border-color:var(--green)}
+.quota-card.bad{border-color:var(--red)}
+.quota-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.quota-top .ti{font-size:13px;font-weight:700}
+#quotaLeft{font-size:13px;font-weight:700;color:var(--green)}
+.quota-bar{height:10px;background:var(--card-h);border-radius:5px;overflow:hidden}
+.quota-bar i{display:block;height:100%;width:0;background:var(--green);border-radius:5px;transition:width .5s,background .5s}
+.quota-bottom{display:flex;align-items:center;gap:8px;margin-top:6px}
+#codeInput{
+  flex:1;background:#0f1430;border:1px solid var(--border);border-radius:9px;color:var(--txt);
+  padding:6px 10px;font-size:12px;text-align:center;outline:none;min-width:0;
+}
+#codeInput::placeholder{color:#5d6a7e}
+#codeInput:focus{border-color:var(--violet)}
+.charge-btn{
+  background:var(--violet);color:#fff;border:none;border-radius:9px;padding:7px 16px;
+  font-size:12px;font-weight:700;cursor:pointer;
+}
+.charge-btn:active{background:#7c3aed}
+#quotaMsg{font-size:11px;color:var(--dim);margin-top:5px;min-height:15px}
+
+/* ================= قرص پروکسی/تونل ================= */
+.tunnel-pill{display:flex;align-items:center;padding:9px 14px;margin-bottom:8px;position:relative}
+#pillText{font-size:13px;color:var(--dim);flex:1;text-align:center}
+#eq{display:flex;gap:4px;align-items:flex-end;height:20px;position:absolute;left:16px;top:50%;transform:translateY(-50%);display:none}
+#eq i{width:8px;background:var(--green);border-radius:2px;height:4px;transition:height .18s}
+
+/* ================= دکمه اصلی ================= */
+.main-btn{
+  width:100%;height:62px;border:none;border-radius:31px;cursor:pointer;position:relative;
+  background:linear-gradient(90deg,var(--b1,#262e4a),var(--b2,#303a5c));
+  color:#fff;font-family:inherit;font-size:15px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;gap:10px;margin:2px 0 6px;
+  transition:filter .2s;
+}
+.main-btn:disabled{cursor:default}
+.main-btn .ic{width:18px;height:18px;flex-shrink:0}
+.main-btn.mode-idle{--b1:#3b82f6;--b2:#8b5cf6;animation:breathe 1.6s ease-in-out infinite}
+.main-btn.mode-busy{--b1:#ca6e05;--b2:#f59e0b;animation:breathe 2.4s ease-in-out infinite}
+.main-btn.mode-connected{--b1:#dc2626;--b2:#ef4444;animation:breathe 2.4s ease-in-out infinite}
+.main-btn.mode-blocked{--b1:#7f1d1d;--b2:#991b1b}
+@keyframes breathe{0%,100%{filter:brightness(.92)}50%{filter:brightness(1.1)}}
+.main-btn.dim{--b1:#262e4a;--b2:#303a5c;color:#8891b4;animation:none}
+
+.links{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.links button,.links label{background:none;border:none;color:var(--dim);font-family:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:8px}
+.links button:active,.links label:active{background:var(--card)}
+.switch{position:relative;width:38px;height:20px;background:var(--card-h);border-radius:10px;transition:background .2s;flex-shrink:0}
+.switch::after{content:'';position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:#8b93b8;transition:transform .2s,background .2s}
+.switch.on{background:var(--violet)}
+.switch.on::after{transform:translateX(-18px);background:#fff}
+
+/* ================= گزارش ================= */
+#logBox{
+  background:#080b18;color:#9fb0c8;border-radius:12px;padding:10px 12px;margin:2px 0 14px;
+  font-size:12px;line-height:1.9;white-space:pre-wrap;word-break:break-word;
+  max-height:300px;overflow-y:auto;
+}
+
+/* ================= کشوی منو ================= */
+#scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;opacity:0;transition:opacity .25s;pointer-events:none}
+#scrim.show{opacity:1;pointer-events:auto}
+#drawer{
+  position:fixed;top:0;bottom:0;right:-280px;width:250px;z-index:61;background:#0f1430;
+  border-left:1px solid var(--border);border-radius:16px 0 0 16px;
+  display:flex;flex-direction:column;padding:12px;transition:right .28s ease;
+}
+#drawer.show{right:0}
+#drawer .dh{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+#drawer .dh b{font-size:17px}
+#drawer .dx{width:30px;height:30px;border-radius:9px;background:var(--card);border:none;color:var(--dim);font-size:14px;cursor:pointer}
+#drawer .it{
+  display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:12px;border:none;
+  background:none;color:var(--txt);font-family:inherit;font-size:14px;cursor:pointer;text-align:right;margin:4px 0;width:100%;
+}
+#drawer .it:active,#drawer .it:hover{background:var(--card-h)}
+#drawer .foot{margin-top:auto;text-align:center;font-size:11px;color:#5d6a7e;padding:10px 0}
+
+/* ================= صفحه‌ها ================= */
+#page{
+  position:fixed;inset:0;z-index:55;background:var(--bg);display:none;flex-direction:column;overflow:hidden;
+}
+#page.show{display:flex}
+#page .ptop{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 4px}
+#page .back{width:110px;height:34px;border-radius:10px;background:var(--card);border:none;color:var(--txt);font-family:inherit;font-size:13px;cursor:pointer}
+#page .ttl{font-size:20px;font-weight:700;display:flex;align-items:center;gap:8px}
+#page .pbody{flex:1;overflow-y:auto;padding:4px 16px 20px;-webkit-overflow-scrolling:touch}
+.booster{text-align:center;padding-top:60px}
+.booster .big{font-size:64px}
+.booster .badge{display:inline-block;background:#312e81;color:#c7d2fe;border-radius:14px;padding:4px 14px;font-size:14px;font-weight:700;margin:8px 0 14px}
+.booster .desc{font-size:13px;color:var(--dim);line-height:2;padding:0 10px}
+
+.help h3{color:var(--cyan);font-size:15px;margin:16px 4px 6px}
+.help p{font-size:12.5px;line-height:2.1;color:var(--txt);margin:0 4px 2px;padding-right:12px}
+
+/* ================= پنل سرورها ================= */
+#serversPanel{
+  position:fixed;inset:0;z-index:58;background:rgba(8,11,24,.92);display:none;flex-direction:column;
+}
+#serversPanel.show{display:flex}
+#serversPanel .phead{display:flex;align-items:center;gap:8px;padding:14px 14px 6px}
+#serversPanel .pclose{width:88px;height:28px;border-radius:9px;background:var(--card-h);border:none;color:var(--txt);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+#serversPanel .ptitle{flex:1;text-align:center;font-size:15px;font-weight:700}
+#serversList{flex:1;overflow-y:auto;padding:6px 12px 16px;-webkit-overflow-scrolling:touch}
+.srv{
+  background:#10162c;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:8px 0;
+  cursor:pointer;transition:background .15s;
+}
+.srv:active{background:var(--card-h)}
+.srv .t{font-size:13px;font-weight:700;margin-bottom:3px}
+.srv .b{font-size:11.5px;color:var(--dim)}
+
+/* ================= توست ================= */
+#toast{
+  position:fixed;top:8px;left:50%;transform:translateX(-50%);width:min(560px,92vw);z-index:70;
+  background:#101a38;border:1px solid #2b3a6b;border-radius:16px;padding:10px 14px;display:none;
+}
+#toast.show{display:block;animation:toastIn .3s ease}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}
+#toast .tt{font-size:14px;font-weight:700;color:var(--cyan)}
+#toast .tb{font-size:12px;line-height:2;margin-top:2px}
+#toast .tx{position:absolute;top:8px;left:8px;width:26px;height:26px;border-radius:8px;border:none;background:none;color:var(--dim);font-size:13px;cursor:pointer}
+
+/* ================= گردونه ================= */
+#wheelModal{
+  position:fixed;inset:0;z-index:90;background:var(--bg);display:none;
+  flex-direction:column;align-items:center;
+}
+#wheelModal.show{display:flex}
+#wheelModal .wx{position:absolute;top:12px;left:12px;width:34px;height:34px;border-radius:10px;border:none;background:var(--card);color:var(--dim);font-size:15px;cursor:pointer}
+#wheelModal .wg{font-size:40px;margin-top:18px}
+#wheelModal .wt{font-size:24px;font-weight:700}
+#wheelModal .ws{font-size:13px;color:var(--dim);margin:2px 0 6px}
+#wheel{width:340px;height:340px;max-width:92vw}
+#wheelBtn{
+  width:190px;height:48px;border:none;border-radius:16px;background:var(--violet);color:#fff;
+  font-family:inherit;font-size:16px;font-weight:700;cursor:pointer;margin:4px 0;
+}
+#wheelBtn:disabled{opacity:.75;cursor:default}
+#wheelBtn.claim{background:var(--green)}
+#wheelResult{font-size:15px;font-weight:700;color:var(--green);text-align:center;min-height:44px;padding:0 16px}
+#wheelModal .wnote{position:absolute;bottom:14px;font-size:10px;color:#5d6a7e}
+
+/* ================= دیالوگ کانفیگ دستی ================= */
+#customDlg{
+  position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.5);display:none;
+  align-items:center;justify-content:center;padding:20px;
+}
+#customDlg.show{display:flex}
+#customDlg .box{background:var(--bg);border:1px solid var(--border);border-radius:18px;width:min(560px,100%);padding:14px 16px}
+#customDlg h4{font-size:16px;text-align:center;margin-bottom:4px}
+#customDlg .lb{font-size:12px;color:var(--dim);text-align:center;margin-bottom:8px}
+#customBox{
+  width:100%;height:150px;background:#080b18;color:var(--txt);border:1px solid var(--border);
+  border-radius:10px;padding:10px;font-size:12px;direction:ltr;text-align:left;outline:none;resize:none;
+}
+#customDlg .hint{font-size:11px;color:#7c8aa8;line-height:1.9;margin:6px 0 10px}
+#customGo{
+  width:100%;height:44px;border:none;border-radius:14px;background:var(--blue);color:#fff;
+  font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;
+}
+#customGo:active{background:#2563eb}
+</style>
+</head>
+<body>
+
+<!-- ================= اسپلش ================= -->
+<div id="splash">
+  <img src="logo.png" alt="">
+  <div class="t1">ManjarVPN</div>
+  <div class="t2">────────  اتصال امن، ساده و سریع  ────────</div>
+  <div class="dots"><span>●</span><span>●</span><span>●</span></div>
+  <div class="bar"><i></i></div>
+  <div class="msg" id="splashMsg">در حال آماده‌سازی…</div>
+  <div class="ver">v1.8.0</div>
+</div>
+
+<!-- ================= اپ ================= -->
+<div id="app" class="hidden">
+  <div class="wrap">
+    <div class="head">
+      <button class="menu" id="menuBtn">☰</button>
+      <div class="mid"><img src="logo.png" alt=""><b>ManjarVPN</b></div>
+      <div class="ver" id="verLbl">v1.8.0</div>
+    </div>
+    <div class="subline">────────  اتصال امن، ساده و سریع  ────────</div>
+
+    <div class="card status-card">
+      <div id="spinner"></div>
+      <div class="status-inner"><span id="dot">●</span><span id="statusText">در حال آماده‌سازی…</span></div>
+    </div>
+
+    <div class="card server-card" id="serverCard">
+      <div class="flag" id="svFlag">🌐</div>
+      <div class="box">
+        <div class="nm" id="svName">انتخاب خودکار بهترین سرور</div>
+        <div class="sb" id="svSub">… منبع زنده • پینگ • یوتوب/اینستاگرام/تلگرام • سرعت دانلود/آپلود</div>
+      </div>
+      <div class="chev" id="svChev">⌄</div>
+    </div>
+
+    <div class="stats">
+      <div class="sc"><div class="lb">پینگ</div><div class="vl" id="stPing" style="color:#a78bfa">−</div></div>
+      <div class="sc"><div class="lb">سرعت دانلود</div><div class="vl" id="stDl" style="color:#60a5fa">− Mbps</div></div>
+      <div class="sc"><div class="lb">سرعت آپلود</div><div class="vl" id="stUl" style="color:#f472b6">− Mbps</div></div>
+    </div>
+
+    <div class="prog">
+      <div class="bar"><i id="progBar"></i></div>
+      <div class="ph" id="progMsg"></div>
+    </div>
+
+    <div class="card quota-card" id="quotaCard">
+      <div class="quota-top">
+        <div class="ti">📦  مصرف حجم اشتراک</div>
+        <div id="quotaLeft"></div>
+      </div>
+      <div class="quota-bar"><i id="quotaBar"></i></div>
+      <div class="quota-bottom">
+        <input id="codeInput" placeholder="کد شارژ (کد خریدار)" autocomplete="off">
+        <button class="charge-btn" id="chargeBtn">شارژ</button>
+      </div>
+      <div id="quotaMsg"></div>
+    </div>
+
+    <div class="card tunnel-pill">
+      <div id="eq"><i></i><i></i><i></i><i></i><i></i></div>
+      <div id="pillText">○  تونل VPN خاموش</div>
+    </div>
+
+    <button class="main-btn mode-idle" id="mainBtn">
+      <svg class="ic" id="btnIc" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 2v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+      <span id="btnText">اتصال خودکار</span>
+    </button>
+
+    <div class="links">
+      <button id="reportBtn">📄  نمایش گزارش اتصال</button>
+      <button id="customBtn">＋ کانفیگ دستی</button>
+      <label id="aiWrap"><span>🤖 نجات با AI</span><span class="switch" id="aiSwitch"></span></label>
+    </div>
+
+    <div id="logBox" class="hidden"></div>
+  </div>
+</div>
+
+<!-- ================= کشوی منو ================= -->
+<div id="scrim"></div>
+<div id="drawer">
+  <div class="dh"><b>☰ منو</b><button class="dx" id="drawerClose">✕</button></div>
+  <button class="it" data-page="vpn">🛡  فیلترشکن (VPN)</button>
+  <button class="it" data-page="game">🎮  Game Booster</button>
+  <button class="it" data-page="app">🚀  App Booster</button>
+  <button class="it" data-page="help">📖  راهنما</button>
+  <div class="foot">ManjarVPN v1.8.0</div>
+</div>
+
+<!-- ================= صفحه‌ها ================= -->
+<div id="page">
+  <div class="ptop">
+    <button class="back" id="pageBack">→  بازگشت</button>
+    <div class="ttl" id="pageTitle">راهنما</div>
+  </div>
+  <div class="pbody" id="pageBody"></div>
+</div>
+
+<!-- ================= پنل سرورها ================= -->
+<div id="serversPanel">
+  <div class="phead">
+    <button class="pclose" id="serversClose">✕  بستن</button>
+    <div class="ptitle">سرورهای تست‌شده — برای اتصال انتخاب کنید</div>
+  </div>
+  <div id="serversList"></div>
+</div>
+
+<!-- ================= توست ================= -->
+<div id="toast">
+  <button class="tx" id="toastClose">✕</button>
+  <div class="tt">💡 راهنمای سریع اتصال</div>
+  <div class="tb">وصل شد ولی سایت‌ها باز نشد؟  یک بار «قطع اتصال» و دوباره «اتصال خودکار» بزنید.<br>وصل نشد؟  سوییچ «🤖 نجات با AI» پایین صفحه را روشن کنید تا کانفیگ تازه بیاید.</div>
+</div>
+
+<!-- ================= گردونه ================= -->
+<div id="wheelModal">
+  <button class="wx" id="wheelClose">✕</button>
+  <div class="wg">🎁</div>
+  <div class="wt">هدیه‌ی خوش‌آمدگویی</div>
+  <div class="ws">بچرخان و اولین اعتبارِ حجم‌ات را رایگان بگیر!</div>
+  <canvas id="wheel" width="360" height="360"></canvas>
+  <button id="wheelBtn">🎡  بچرخان</button>
+  <div id="wheelResult"></div>
+  <div class="wnote">گردونه فقط یک‌بار برای هر سیستم نمایش داده می‌شود</div>
+</div>
+
+<!-- ================= کانفیگ دستی ================= -->
+<div id="customDlg">
+  <div class="box">
+    <h4>افزودن کانفیگ یا اشتراک دستی</h4>
+    <div class="lb">لینک VLESS/VMess/Trojan/SS یا لینک اشتراک (هر خط یکی):</div>
+    <textarea id="customBox"></textarea>
+    <div class="hint">⚠ سرور شخصی (مثل VLESS+Reality روی پورت ۴۴۳) خیلی پایدارتر از کانفیگ‌های رایگان عمومی است. کانفیگ‌های دستیِ سالم به حافظه اضافه می‌شوند.</div>
+    <button id="customGo">⚡  تست و اتصال</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   ManjarVPN v1.8 — رابط اندروید (پورتِ کاملِ main.py)
+   ============================================================ */
+var BG='#0c1022', BORDER='#232c52', TXT='#eef1fb', DIM='#8b93b8',
+    GREEN='#22c55e', GREEN_DIM='#16a34a', BLUE='#3b82f6', VIOLET='#8b5cf6',
+    AMBER='#d97706', RED='#dc2626', CYAN='#7dd3fc';
+
+var appState='starting';           // starting | idle | busy | connected
+var blocked=false;
+var topNodes=[];
+var logs=[];
+var sources=43;
+var aiOn=false;
+var toastTimer=null, quotaMsgTimer=null;
+var connNode=null;
+
+function $(id){return document.getElementById(id)}
+function fa(n){return String(n).replace(/\d/g,function(d){return '۰۱۲۳۴۵۶۷۸۹'[+d]})}
+function fmtMb(mb){
+  if(mb>=1024){var s=(mb/1024).toFixed(2);if(s.indexOf('.00')>=0)s=(mb/1024).toFixed(0);else s=s.replace(/0$/,'');return s+' گیگ'}
+  return Math.round(mb)+' مگ';
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+/* ================= اسپلش ================= */
+var SPLASH_MS=7000, SPLASH_MSGS=[
+  'در حال آماده‌سازی…','بارگذاری منابع کانفیگ…','چک کردن هسته Xray…','کمی صبر — نزدیک آماده‌شدن…'];
+var splashT0=Date.now(), splashIdx=-1;
+setInterval(function(){
+  if($('splash').classList.contains('hidden'))return;
+  var t=(Date.now()-splashT0)/1000;
+  var dots=document.querySelectorAll('#splash .dots span');
+  for(var i=0;i<3;i++){
+    var b=.25+.75*Math.max(0,Math.sin(t*4.2-i*.9));
+    dots[i].style.color='rgb('+Math.round(36+b*(125-36))+','+Math.round(48+b*(211-48))+','+Math.round(72+b*(252-72))+')';
+  }
+  var idx=Math.floor(t/1.75)%SPLASH_MSGS.length;
+  if(idx!==splashIdx){splashIdx=idx;$('splashMsg').textContent=SPLASH_MSGS[idx]}
+},45);
+function finishSplash(){
+  $('splash').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  init();
+}
+
+/* ================= شروع ================= */
+var inited=false;
+function init(){
+  if(inited)return; inited=true;
+  try{
+    var st=JSON.parse(Manjar.state());
+    sources=st.sources||43;
+    aiOn=!!st.aiRescue;
+    if(aiOn)$('aiSwitch').classList.add('on');
+    blocked=!!st.blocked;
+    updateQuota(st.account);
+    $('svSub').textContent=fa(sources)+' منبع زنده • پینگ • یوتوب/اینستاگرام/تلگرام • سرعت دانلود/آپلود';
+    try{var ls=JSON.parse(Manjar.logs());if(ls.length){logs=ls;renderLog()}}catch(e){}
+  }catch(e){}
+  appState='idle';
+  if(blocked)applyBlocked(); else setIdleVisual('آماده اتصال');
+  setTimeout(showToast,500);
+  try{
+    var st2=JSON.parse(Manjar.state());
+    if(!st2.wheelDone) setTimeout(openWheel,900);
+  }catch(e){}
+}
+
+/* ================= رویدادهای موتور ================= */
+window.addEventListener('manjar',function(ev){
+  var t=ev.data.type, p=ev.data.payload||{};
+  if(t==='log'){logs.push('['+nowTs()+']  '+p.msg);if(logs.length>400)logs.shift();renderLog()}
+  else if(t==='logs'){logs=p.lines||[];renderLog()}
+  else if(t==='status'){setStatus(p.msg,p.color)}
+  else if(t==='progress'){setProgress(p)}
+  else if(t==='busy'){setBusy('در حال تست…')}
+  else if(t==='connected'){onConnected(p.node)}
+  else if(t==='repaired'){onConnected(p.node)}
+  else if(t==='livespeed'){$('stDl').textContent=p.v.toFixed(1)+' Mbps'}
+  else if(t==='upspeed'){$('stUl').textContent=p.v.toFixed(1)+' Mbps'}
+  else if(t==='topnodes'){topNodes=p.nodes||[];if($('serversPanel').classList.contains('show'))renderServers()}
+  else if(t==='usage'){updateQuota(p)}
+  else if(t==='quota_exhausted'){onQuotaExhausted()}
+  else if(t==='disconnected'){log('✓ اتصال قطع شد و تونل بسته شد');setIdle()}
+  else if(t==='autofail'){onAutofail()}
+  else if(t==='error'){setStatus('خطا در اتصال',RED);setIdle()}
+  else if(t==='idle'){setIdle()}
+  else if(t==='redeemed'){onRedeemed(p)}
+  else if(t==='unblocked'){blocked=false;if(appState==='idle')setIdleVisual('آماده اتصال')}
+});
+function nowTs(){var d=new Date();return d.toTimeString().slice(0,8)}
+function log(m){logs.push('['+nowTs()+']  '+m);if(logs.length>400)logs.shift();renderLog()}
+function renderLog(){
+  var b=$('logBox');
+  if(!b.classList.contains('hidden'))b.textContent=logs.join('\n');
+}
+
+/* ================= وضعیت‌ها ================= */
+var statusColor=GREEN;
+function colMap(c){
+  var m={green:GREEN,amber:AMBER,red:RED,blue:BLUE,dim:DIM,violet:VIOLET,cyan:CYAN};
+  return m[c]||c||GREEN;
+}
+function setStatus(msg,color){
+  statusColor=colMap(color);
+  $('statusText').textContent=msg;
+  var c=statusColor;
+  $('statusText').style.color=c; $('dot').style.color=c;
+}
+function setBusy(msg){
+  appState='busy';
+  setBtn('busy','لغو تست و اتصال');
+  setStatus(msg||'در حال تست…',AMBER);
+  $('spinner').style.display='block';
+  $('eq').style.display='none';
+  connNode=null;
+  updateServerCard(null);
+}
+function setIdle(){
+  appState='idle';
+  $('spinner').style.display='none';
+  $('eq').style.display='none';
+  if(blocked){applyBlocked();return}
+  setIdleVisual('آماده اتصال');
+  $('stDl').textContent='− Mbps';
+}
+function setIdleVisual(msg){
+  setBtn('idle','اتصال خودکار');
+  setStatus(msg,GREEN);
+  $('pillText').textContent='○  تونل VPN خاموش';
+  $('pillText').style.color=DIM;
+}
+function applyBlocked(){
+  blocked=true;
+  setBtn('blocked','اعتبار تمام شد — شارژ کنید');
+  setStatus('اعتبار تمام شد — باید اشتراک خود را تامین کنید',RED);
+  log('⛔ اعتبار حجم شما تمام شده است — باید اشتراک خود را تامین کنید.');
+  log('   کد شارژ را در کادر «کد شارژ» وارد کنید و «شارژ» را بزنید.');
+  $('quotaCard').classList.add('bad');
+  $('eq').style.display='none'; $('spinner').style.display='none';
+}
+function onConnected(node){
+  appState='connected'; blocked=blockState(); connNode=node;
+  $('progBar').style.width='100%';
+  $('progMsg').textContent='متصل ✓';
+  $('spinner').style.display='none';
+  setBtn('connected','قطع اتصال');
+  setStatus('متصل',GREEN);
+  updateServerCard(node);
+  if(node){
+    $('stPing').textContent=(node.ping||0)+' ms';
+    $('stDl').textContent=node.speed>0?node.speed.toFixed(1)+' Mbps':'— Mbps';
+    $('stUl').textContent=node.up>0?node.up.toFixed(1)+' Mbps':'— Mbps';
+    if(node.opened)log('✓ با این سرور باز شد: '+node.opened);
+  }
+  $('pillText').textContent='✓  تونل VPN فعال';
+  $('pillText').style.color=GREEN;
+  $('eq').style.display='flex';
+}
+function blockState(){
+  try{return !!JSON.parse(Manjar.state()).blocked}catch(e){return blocked}
+}
+function onAutofail(){
+  if(appState==='connected')return;
+  autofailCount++;
+  if(autofailCount>=3){
+    try{Manjar.disconnect()}catch(e){}
+    log('✗ اتصال ۳ بار پایدار نشد — دوباره تلاش کنید یا از «کانفیگ دستی» سرور شخصی اضافه کنید.');
+    setStatus('خطا در اتصال',RED);setIdle();
+    autofailCount=0;
+    return;
+  }
+  setBusy('بازسازی اتصال ('+fa(autofailCount)+'/۳)…');
+  try{Manjar.connectAuto()}catch(e){}
+}
+var autofailCount=0;
+function onQuotaExhausted(){
+  if(appState==='starting')return;
+  setStatus('اعتبار تمام شد — قطع اتصال…',RED);
+  try{Manjar.disconnect()}catch(e){}
+  setTimeout(applyBlocked,400);
+}
+
+/* ================= دکمه اصلی ================= */
+function setBtn(mode,text){
+  var b=$('mainBtn');
+  b.className='main-btn mode-'+mode;
+  b.disabled=(mode==='blocked');
+  $('btnText').textContent=text;
+  var ic=$('btnIc');
+  if(mode==='idle'){
+    ic.innerHTML='<path d="M12 2v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>';
+  }else{
+    ic.innerHTML='<rect x="6" y="6" width="12" height="12" rx="1.5" fill="#fff" stroke="none"/>';
+  }
+}
+$('mainBtn').addEventListener('click',function(){
+  if(blocked){applyBlocked();return}
+  if(appState==='idle'){
+    autofailCount=0;
+    setBusy('در حال بررسی اینترنت…');
+    try{Manjar.connectAuto()}catch(e){setIdle()}
+  }else if(appState==='busy'){
+    setStatus('در حال لغو…',AMBER);
+    try{Manjar.cancel()}catch(e){}
+  }else if(appState==='connected'){
+    setStatus('در حال قطع…',AMBER);
+    try{Manjar.disconnect()}catch(e){}
+  }
+});
+
+/* ================= کارت سرور ================= */
+function updateServerCard(node){
+  if(!node){
+    $('svFlag').textContent='🌐';
+    $('svName').textContent='انتخاب خودکار بهترین سرور';
+    $('svSub').textContent=fa(sources)+' منبع زنده • پینگ • یوتوب/اینستاگرام/تلگرام • سرعت دانلود/آپلود';
+    return;
+  }
+  $('svFlag').textContent=node.flag||'🌐';
+  $('svName').textContent=node.display;
+  var bits=[node.proto];
+  if(node.ping)bits.push('پینگ '+fa(node.ping)+'ms');
+  if(node.speed)bits.push('دان '+node.speed.toFixed(1)+'Mbps');
+  if(node.up)bits.push('آپ '+node.up.toFixed(1)+'Mbps');
+  if(node.opened)bits.push('✓ '+node.opened);
+  $('svSub').textContent=bits.join(' • ')+' • '+node.server;
+}
+$('serverCard').addEventListener('click',function(){
+  var p=$('serversPanel'); p.classList.add('show'); renderServers();
+});
+$('serversClose').addEventListener('click',function(){$('serversPanel').classList.remove('show')});
+function renderServers(){
+  var el=$('serversList'); el.innerHTML='';
+  if(!topNodes.length){
+    var msg=(appState==='busy')
+      ?'تست در جریان است… به‌محض تایید هر سرور، همین‌جا نمایش داده می‌شود.'
+      :'هنوز تستی انجام نشده — اول «اتصال خودکار» را بزنید.';
+    var d=document.createElement('div');
+    d.style.cssText='color:'+DIM+';text-align:center;padding:24px 16px;font-size:13px';
+    d.textContent=msg; el.appendChild(d); return;
+  }
+  topNodes.forEach(function(n){
+    var div=document.createElement('div'); div.className='srv';
+    var bits=[n.proto,'پینگ '+fa(n.ping||0)+'ms'];
+    if(n.speed)bits.push('دان '+n.speed.toFixed(1)+'Mbps');
+    if(n.up)bits.push('آپ '+n.up.toFixed(1)+'Mbps');
+    if(n.opened)bits.push('✓ '+n.opened);
+    div.innerHTML='<div class="t">'+esc(n.flag)+'  '+esc(n.display)+'</div><div class="b">'+esc(bits.join(' • '))+'</div>';
+    div.addEventListener('click',function(){
+      if(appState==='busy')return;
+      if(blocked){applyBlocked();return}
+      $('serversPanel').classList.remove('show');
+      setBusy('اتصال به '+n.display+'…');
+      try{Manjar.connectNode(n.uri)}catch(e){}
+    });
+    el.appendChild(div);
+  });
+}
+
+/* ================= نوار پیشرفت ================= */
+var barTarget=0;
+function setProgress(p){
+  var total=Math.max(p.total,1), ratio=Math.max(p.done,0)/total, v=barTarget;
+  if(p.phase==='fetch')v=.12*ratio;
+  else if(p.phase==='tcp')v=.12+.15*ratio;
+  else if(p.phase==='latency')v=.27+.33*ratio;
+  else if(p.phase==='deep')v=.60+.32*ratio;
+  else if(p.phase==='speed')v=.92+.03*ratio;
+  else if(p.phase==='connect')v=.95+.05*ratio;
+  barTarget=Math.min(v,1);
+  $('progBar').style.width=(barTarget*100)+'%';
+  $('progMsg').textContent=p.msg;
+}
+setInterval(function(){
+  var cur=parseFloat($('progBar').style.width)/100||0;
+  var diff=barTarget-cur;
+  if(Math.abs(diff)>0.0015)$('progBar').style.width=((cur+diff*0.22)*100)+'%';
+  if(appState==='connected'){
+    var bars=document.querySelectorAll('#eq i');
+    for(var i=0;i<bars.length;i++){
+      var t=Date.now()/1000;
+      var h=4+Math.abs(Math.sin(t*3.1+i*1.3))*14;
+      bars[i].style.height=h+'px';
+    }
+  }
+},50);
+
+/* ================= مصرف حجم ================= */
+function updateQuota(snap){
+  if(!snap)return;
+  var used=snap.used_mb,total=snap.credit_mb,rem=snap.remaining_mb,frac=Math.min(1,snap.frac);
+  var color=GREEN,bar=GREEN,left;
+  if(rem<=0){color=RED;bar=RED;left='اعتبار تمام شد';blocked=true}
+  else{
+    blocked=false;
+    if(frac>=.85){color=RED;bar=RED;left='باقی‌مانده: '+fmtMb(rem)}
+    else if(frac>=.6){color=AMBER;bar=AMBER;left='باقی‌مانده: '+fmtMb(rem)}
+    else left='باقی‌مانده: '+fmtMb(rem);
+  }
+  $('quotaLeft').textContent=left;
+  $('quotaLeft').style.color=color;
+  $('quotaBar').style.width=(frac*100)+'%';
+  $('quotaBar').style.background=bar;
+  if(rem<=0||frac<.6)
+    $('quotaMsg').textContent='مصرف شده: '+fmtMb(used)+' از '+fmtMb(total);
+}
+$('chargeBtn').addEventListener('click',function(){
+  var code=$('codeInput').value.trim();
+  try{
+    var r=JSON.parse(Manjar.redeem(code));
+    onRedeemed(r);
+  }catch(e){}
+});
+$('codeInput').addEventListener('keydown',function(e){if(e.key==='Enter')$('chargeBtn').click()});
+function onRedeemed(r){
+  if(r.ok){
+    $('codeInput').value='';
+    log('✓ '+r.msg);
+    updateQuota(r.snapshot);
+    $('quotaMsg').textContent=r.msg; $('quotaMsg').style.color=GREEN;
+    $('quotaCard').classList.add('ok');
+    setTimeout(function(){$('quotaCard').classList.remove('ok')},2500);
+  }else{
+    log('✗ شارژ ناموفق: '+r.msg);
+    $('quotaMsg').textContent=r.msg; $('quotaMsg').style.color=RED;
+  }
+  clearTimeout(quotaMsgTimer);
+  quotaMsgTimer=setTimeout(function(){
+    try{updateQuota(JSON.parse(Manjar.state()).account)}catch(e){}
+    $('quotaMsg').style.color=DIM;
+  },5000);
+}
+
+/* ================= گزارش / کانفیگ دستی ================= */
+$('reportBtn').addEventListener('click',function(){
+  var b=$('logBox'), open=b.classList.contains('hidden');
+  b.classList.toggle('hidden',!open);
+  $('reportBtn').textContent=open?'📄  بستن گزارش اتصال':'📄  نمایش گزارش اتصال';
+  if(open)b.textContent=logs.join('\n');
+});
+$('customBtn').addEventListener('click',function(){
+  if(appState==='busy')return;
+  $('customDlg').classList.add('show');
+});
+$('customGo').addEventListener('click',function(){
+  var t=$('customBox').value.trim();
+  if(!t)return;
+  if(blocked){applyBlocked();return}
+  $('customDlg').classList.remove('show');
+  autofailCount=0;
+  setBusy('بررسی کانفیگ دستی…');
+  try{Manjar.connectCustom(t)}catch(e){setIdle()}
+});
+
+/* ================= سوییچ AI ================= */
+$('aiWrap').addEventListener('click',function(){
+  aiOn=!aiOn;
+  $('aiSwitch').classList.toggle('on',aiOn);
+  try{Manjar.setAi(aiOn)}catch(e){}
+});
+
+/* ================= کشو و صفحه‌ها ================= */
+function openDrawer(){$('drawer').classList.add('show');$('scrim').classList.add('show')}
+function closeDrawer(){$('drawer').classList.remove('show');$('scrim').classList.remove('show')}
+$('menuBtn').addEventListener('click',openDrawer);
+$('drawerClose').addEventListener('click',closeDrawer);
+$('scrim').addEventListener('click',closeDrawer);
+var HELP_HTML=''+
+'<div class="help">'+
+'<h3>🚀 شروع سریع</h3>'+
+'<p>• دکمه‌ی «اتصال خودکار» را بزنید؛ برنامه خودش بهترین سرور را پیدا و وصل می‌کند (حدود ۱ تا ۳ دقیقه).</p>'+
+'<p>• دفعه‌ی اول، اندروید از شما اجازه‌ی VPN می‌پرسد — «اجازه دادن» را بزنید.</p>'+
+'<p>• همه‌چیز خودکار است — لازم نیست چیزی تنظیم کنید.</p>'+
+'<h3>🔄 اگر وصل شد ولی کار نمی‌کرد</h3>'+
+'<p>• یک بار «قطع اتصال» بزنید و دوباره «اتصال خودکار».</p>'+
+'<p>• همین! در اکثر موارد مشکل همین‌طوری حل می‌شود.</p>'+
+'<h3>🤖 اگر اصلا وصل نشد</h3>'+
+'<p>• سوییچِ «🤖 نجات با AI» پایینِ صفحه را روشن کنید و دوباره تلاش کنید.</p>'+
+'<p>• این حالت کانفیگ‌های تازه می‌گیرد و همه را کامل تست می‌کند.</p>'+
+'<h3>📦 مصرف حجم و کد شارژ</h3>'+
+'<p>• کارتِ «مصرف حجم اشتراک» نشان می‌دهد چقدر از اعتبار‌تان مصرف شده است.</p>'+
+'<p>• اعتبار پیش‌فرض ۵۰۰ مگابایت است + جایزه‌ی گردونه‌ی خوش‌آمدگویی (فقط بار اول).</p>'+
+'<p>• کد شارژ را در کادرِ پایینِ همان کارت بنویسید و «شارژ» را بزنید:</p>'+
+'<p>• کد خریدار = ۷ گیگابایت   •   کد مدیر = ۲۰ گیگابایت (هر بار که اشتراک تمام شد قابل استفاده است)</p>'+
+'<p>• اگر اعتبار تمام شود، برنامه وصل نمی‌شود و پیام «باید اشتراک خود را تامین کنید» می‌دهد؛</p>'+
+'<p>• کافی است کد شارژ را وارد کنید تا دوباره فعال شود.</p>'+
+'<h3>🌐 تونل و برنامه‌ها</h3>'+
+'<p>• در اندروید همه‌چیز خودکار است — تونل VPN کل سیستم را می‌پوشاند و مرورگر و تمام برنامه‌ها بدون تنظیمِ دستی از آن رد می‌شوند.</p>'+
+'<h3>❓ سوال‌های پرتکرار</h3>'+
+'<p>• لودینگ اولِ برنامه ۷ ثانیه طول می‌کشد — طبیعی است؛ در همین مدت هسته آماده می‌شود.</p>'+
+'<p>• گردونه‌ی هدیه فقط یک‌بار برای هر سیستم می‌آید و دیگر تکرار نمی‌شود.</p>'+
+'<p>• برنامه وسط کار خودش را زیر نظر دارد؛ اگر اتصال خراب شود خودش تعمیرش می‌کند.</p>'+
+'<p>• بستن صفحه، تونل را قطع نمی‌کند — برای قطع کردن از دکمه «قطع اتصال» استفاده کنید.</p>'+
+'</div>';
+var pages={
+  game:{t:'🎮  Game Booster',h:'<div class="booster"><div class="big">🎮</div><div class="badge">به‌زودی</div><div class="desc">بهینه‌سازی خودکار پینگ و اولویت شبکه برای بازی‌ها — به‌زودی به ManjarVPN اضافه می‌شود.</div></div>'},
+  app:{t:'🚀  App Booster',h:'<div class="booster"><div class="big">🚀</div><div class="badge">به‌زودی</div><div class="desc">شتاب‌دهی برنامه‌ها و مدیریت هوشمند پهنای باند — به‌زودی به ManjarVPN اضافه می‌شود.</div></div>'},
+  help:{t:'📖  راهنما',h:HELP_HTML}
+};
+function showPage(key){
+  closeDrawer();
+  if(key==='vpn')return;
+  var pg=pages[key]; if(!pg)return;
+  $('pageTitle').textContent=pg.t;
+  $('pageBody').innerHTML=pg.h;
+  $('page').classList.add('show');
+}
+$('pageBack').addEventListener('click',function(){$('page').classList.remove('show')});
+document.querySelectorAll('#drawer .it').forEach(function(b){
+  b.addEventListener('click',function(){showPage(b.getAttribute('data-page'))});
+});
+function handleBack(){
+  if($('customDlg').classList.contains('show')){$('customDlg').classList.remove('show');return true}
+  if($('wheelModal').classList.contains('show')){skipWheel();return true}
+  if($('page').classList.contains('show')){$('page').classList.remove('show');return true}
+  if($('drawer').classList.contains('show')){closeDrawer();return true}
+  if($('serversPanel').classList.contains('show')){$('serversPanel').classList.remove('show');return true}
+  try{Manjar.minimize()}catch(e){}
+  return true;
+}
+window.handleBack=handleBack;
+
+/* ================= توست ================= */
+function showToast(){
+  $('toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(hideToast,15000);
+}
+function hideToast(){$('toast').classList.remove('show');clearTimeout(toastTimer)}
+$('toastClose').addEventListener('click',hideToast);
+
+/* ================= گردونه ================= */
+var WHEEL_SEGS=[
+  ['500MB',500,'#3b82f6'],['510MB',510,'#8b5cf6'],['525MB',525,'#22c55e'],['540MB',540,'#0ea5e9'],
+  ['555MB',555,'#f59e0b'],['570MB',570,'#ec4899'],['585MB',585,'#14b8a6'],['600MB',600,'#a78bfa']];
+var wheelAngle=Math.random()*360, spinning=false, wheelPrize=0;
+function drawWheel(){
+  var c=$('wheel'),ctx=c.getContext('2d');
+  var W=c.width,H=c.height,cx=W/2,cy=H/2,r=W/2-30;
+  ctx.clearRect(0,0,W,H);
+  var n=WHEEL_SEGS.length,seg=360/n;
+  for(var i=0;i<n;i++){
+    var start=(wheelAngle+i*seg)%360;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,(start-90)*Math.PI/180,(start+seg-90)*Math.PI/180);
+    ctx.closePath();
+    ctx.fillStyle=WHEEL_SEGS[i][2];ctx.fill();
+    ctx.strokeStyle=BG;ctx.lineWidth=2;ctx.stroke();
+    var mid=(wheelAngle+i*seg+seg/2)*Math.PI/180;
+    var tx=cx+Math.cos(mid)*r*.66, ty=cy+Math.sin(mid)*r*.66;
+    ctx.fillStyle='#fff';ctx.font='bold 13px Vazirmatn, sans-serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(WHEEL_SEGS[i][0],tx,ty);
+  }
+  ctx.beginPath();ctx.arc(cx,cy,42,0,Math.PI*2);
+  ctx.fillStyle='#0f1430';ctx.fill();ctx.strokeStyle=BORDER;ctx.lineWidth=3;ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='26px serif';ctx.fillText('🎁',cx,cy+2);
+  ctx.beginPath();
+  ctx.moveTo(cx-15,cy-r-13);ctx.lineTo(cx+15,cy-r-13);ctx.lineTo(cx,cy-r+13);ctx.closePath();
+  ctx.fillStyle='#fff';ctx.fill();ctx.strokeStyle='#0c1022';ctx.lineWidth=2;ctx.stroke();
+}
+function openWheel(){
+  if(spinning)return;
+  try{if(JSON.parse(Manjar.state()).wheelDone)return}catch(e){}
+  $('wheelModal').classList.add('show');
+  drawWheel();
+}
+function spinWheel(){
+  if(spinning)return;
+  spinning=true;
+  $('wheelBtn').disabled=true;$('wheelBtn').textContent='در حال چرخش…';
+  $('wheelResult').textContent='';$('wheelResult').style.color=DIM;
+  var n=WHEEL_SEGS.length,seg=360/n;
+  var target=Math.floor(Math.random()*n);
+  var jitter=(Math.random()-.5)*seg*.64;
+  var finalAngle=(90-(target*seg+seg/2)+jitter)%360;
+  var delta=((finalAngle-wheelAngle)%360+360)%360+360*6;
+  var a0=wheelAngle%360, t0=performance.now(), dur=4400;
+  function anim(now){
+    var t=Math.min(1,(now-t0)/dur);
+    var ease=1-Math.pow(1-t,3);
+    wheelAngle=(a0+delta*ease)%360;
+    drawWheel();
+    if(t<1){requestAnimationFrame(anim)}
+    else{
+      wheelPrize=WHEEL_SEGS[target][1];
+      $('wheelResult').textContent='🎉 تبریک! '+fa(wheelPrize)+' مگابایت اعتبارِ رایگان فعال شد';
+      $('wheelResult').style.color=GREEN;
+      $('wheelBtn').textContent='شروع استفاده';
+      $('wheelBtn').classList.add('claim');
+      $('wheelBtn').disabled=false;
+      spinning=false;
+    }
+  }
+  requestAnimationFrame(anim);
+}
+function claimWheel(){
+  try{Manjar.wheelClaim(wheelPrize||500)}catch(e){}
+  closeWheelModal();
+}
+function skipWheel(){
+  try{Manjar.wheelSkip()}catch(e){}
+  closeWheelModal();
+  log('ℹ گردونه رد شد — اعتبار پیش‌فرض ۵۰۰ مگابایت فعال است.');
+}
+function closeWheelModal(){
+  $('wheelModal').classList.remove('show');
+  $('wheelBtn').classList.remove('claim');
+  $('wheelBtn').textContent='🎡  بچرخان';
+  $('wheelBtn').disabled=false;
+  $('wheelResult').textContent='';
+}
+$('wheelBtn').addEventListener('click',function(){
+  if($('wheelBtn').classList.contains('claim'))claimWheel();else spinWheel();
+});
+$('wheelClose').addEventListener('click',skipWheel);
+
+/* ================= راهنما ================= */
+
+/* ================= شروعِ اسپلش ================= */
+drawWheel();
+setTimeout(finishSplash,SPLASH_MS);
+</script>
+</body>
+</html>
