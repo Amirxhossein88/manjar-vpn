@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine v1.4
+ManjarVPN Engine v1.5
 =====================
+مهم‌ترین تغییر این نسخه: «اتصال فقط وقتی مجاز است که سرعت واقعی هم داشته باشد».
+نودِ «فقط‌پینگی» (پینگ می‌دهد ولی هیچ داده‌ای رد نمی‌کند) در هر چهار مرحله رد می‌شود:
+  ۱) تست عمیق: سرعتِ «پایدار» (۳ دانلود موازی مثل مرورگر، بدون یک‌وَک اولیه) زیر حداقل → رد
+  ۲) اسکن: هیچ کاندیدِ بدونِ حداقلِ سرعت انتخاب نمی‌شود (دیگر به نودِ بی‌سرعت وصل نمی‌شود)
+  ۳) دروازه‌ی اتصال: قبل از روشن‌کردن پروکسی سیستم، سرعت تونل سنجیده می‌شود؛ اگر خالی بود → کاندید بعدی
+  ۴) نگهبان: اگر سرعت تونل چند نمونه‌ی متوالی عملاً صفر باشد → تعویض بی‌صدای سرور
 موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۳۰ منبع زنده، پیش‌فیلتر TCP،
 تست پینگ، سپس «تست عمیق» هر کاندید با یک هسته Xray: باز کردن واقعی
 یوتوب / اینستاگرام / تلگرام از داخل همان تونل + تست سرعت واقعی دانلود و آپلود،
@@ -33,7 +39,7 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 # ============================ تنظیمات قابل تغییر ============================
 MAX_TEST_NODES = 800          # حداکثر کانفیگ برای پیش‌فیلتر TCP
@@ -48,7 +54,28 @@ LATENCY_TIMEOUT = 5
 SPEED_TIMEOUT = 7
 SPEED_MAX_BYTES = 6_000_000
 GOOD_SPEED_EARLY = 12.0       # Mbps — اگر برسد دیگر لازم نیست صبر کامل کنیم
-MIN_GOOD_SPEED_MBPS = 0.3
+
+# ===== سرعت دیگر «تزئینی» نیست؛ شرطِ اتصال است =====
+MIN_GOOD_SPEED_MBPS = 2.0     # حداقل سرعتِ «خوب» (یوتوب/اینستا راحت بالا می‌آید)
+MIN_USABLE_SPEED_MBPS = 0.6   # کفِ مطلق — زیرِ این تونل عملاً بی‌استفاده است و رد می‌شود
+CONNECT_GATE_MBPS = 1.0       # دروازه‌ی اتصال نهایی: قبل از فعال‌شدن پروکسی سیستم سنجیده می‌شود
+
+# نگهبان اتصال (main.py): «فقط‌پینگی» را وسط کار هم می‌گیرد
+LIVE_MIN_SPEED_MBPS = 0.5     # نمونه‌ی سرعت زیر این = تونل عملاً مرده
+LIVE_SLOW_LIMIT = 3           # چند نمونه‌ی متوالی مرده → تعویض بی‌صدای سرور
+
+# ===== تست سرعتِ «پایدار» مثل مرورگر واقعی =====
+# قبلاً: یک اتصال تکی که بعد از ۳۰۰KB با سرعتِ بالای ۱۲ قطع می‌شد → «سرعتِ شروع» را می‌داد نه سرعتِ واقعی.
+# حالا: ۳ دانلودِ موازی از CDNهای متفاوت، ۶ ثانیه، و سرعت فقط از ثانیه‌ی ۱.۵ به بعد حساب می‌شود
+# تا اثر slow-start حذف شود. نودهایی که بعد از چند کیلوبایت برش می‌زنند اینجا لو می‌روند.
+SUSTAIN_SECONDS = 6.0         # مدت تست
+SUSTAIN_WARMUP = 1.5          # یک‌وَک اولیه از محاسبه حذف می‌شود
+SUSTAIN_ENDPOINTS = [
+    "https://speed.cloudflare.com/__down?bytes=25000000",
+    "https://speed.cloudflare.com/__down?bytes=25000000",
+    # فایل بزرگ از CDN گوگل — همان خانواده‌ی لبه‌هایی که ترافیک یوتوب از آن رد می‌شود
+    "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
+]
 # تست واقعی: علاوه بر 204، یک سایت واقعی TLS هم باید باز شود (ضد «وصل شد ولی کار نمی‌کند»)
 REAL_SITE_URL = "https://www.wikipedia.org/static/favicon/wikipedia.ico"
 UPLOAD_TEST_URL = "https://speed.cloudflare.com/__up"
@@ -67,7 +94,7 @@ SITE_TARGETS = [
 SITE_MIN_PASS = 2             # حداقل چند سایت از ۳ باید باز شود تا کاندید تایید شود
 DEEP_POOL = 40                # کم‌پینگ‌ترین‌ها که تست عمیق می‌شوند
 DEEP_TARGET = 12              # به‌محض این تعداد نتیجه‌ی کامل، بقیه رها می‌شوند
-DEEP_WORKERS = 5              # چند کاندید همزمان تست عمیق شوند
+DEEP_WORKERS = 3              # چند کاندید همزمان تست عمیق شوند (کمتر = اعداد تمیزتر)
 SITE_TIMEOUT = 6              # ثانیه برای هر سایت
 UPLOAD_PROBE_BYTES = 400_000  # حجم نمونه آپلود هر کاندید
 
@@ -529,7 +556,9 @@ def build_outbound(node: Node):
     elif net == "httpupgrade":
         stream["httpupgradeSettings"] = {"path": e.get("path") or "/", "host": e.get("host") or sni}
     elif net == "xhttp":
-        stream["xhttpSettings"] = {"path": e.get("path") or "/", "host": e.get("host") or sni}
+        stream["xhttpSettings"] = {"path": e.get("path") or "/",
+                                   "host": e.get("host") or sni,
+                                   "mode": e.get("mode") or "auto"}
 
     if node.proto == "vmess":
         try:
@@ -1081,13 +1110,22 @@ class VpnEngine:
                 return None
             if len(opened) < SITE_MIN_PASS:
                 return None
-            node.extra["verified"] = True
             node.extra["opened"] = "،".join(opened)
 
-            # ۲) سرعت دانلود واقعی از داخل همان تونل
+            # ۲) سرعت دانلودِ «پایدار» از داخل همان تونل (۳ دانلود موازی، بدون slow-start)
             node.speed = self._dl_speed_on_port(proxies)
 
-            # ۳) سرعت آپلود واقعی از داخل همان تونل
+            # ۳) نودِ «فقط‌پینگی»: سایت‌ها باز شدند ولی داده‌ی واقعی رد نمی‌شود → رد
+            if node.speed < MIN_USABLE_SPEED_MBPS:
+                self.log(f"✗ رد شد: {node.display()} — سایت‌ها باز شدند ولی سرعتِ پایدار "
+                         f"{node.speed:.1f} Mbps است (فقط‌پینگی)")
+                node.extra["dead_data"] = True
+                return None
+
+            # تایید فقط بعد از سالم‌بودن سرعت ثبت می‌شود تا نودِ بی‌سرعت در رتبه‌بندی بالا نِشیند
+            node.extra["verified"] = True
+
+            # ۴) سرعت آپلود واقعی از داخل همان تونل
             if not self.stop_flag.is_set():
                 node.up_speed = self._ul_speed_on_port(proxies)
             return node
@@ -1101,31 +1139,72 @@ class VpnEngine:
             except OSError:
                 pass
 
-    def _dl_speed_on_port(self, proxies: dict, timeout: float = SPEED_TIMEOUT) -> float:
-        """تست سرعت دانلود روی یک تونل مشخص (Mbps)."""
-        try:
-            t0 = time.time()
-            total = 0
-            with SESSION.get("https://speed.cloudflare.com/__down?bytes=6000000",
-                             stream=True, proxies=proxies,
-                             timeout=(5, timeout)) as r:
-                if r.status_code >= 400:
-                    return 0.0
-                for chunk in r.iter_content(65536):
-                    total += len(chunk)
-                    if total >= SPEED_MAX_BYTES:
-                        break
-                    if time.time() - t0 > timeout:
-                        break
-                    if GOOD_SPEED_EARLY and total > 300_000 and \
-                            total * 8.0 / (time.time() - t0) / 1e6 >= GOOD_SPEED_EARLY:
-                        break          # سرعت خوب است — لازم نیست بیشتر دان کنیم
-            elapsed = time.time() - t0
-            if elapsed <= 0.05 or total < 100_000:
-                return 0.0
-            return total * 8.0 / elapsed / 1e6
-        except Exception:
+    def _dl_speed_on_port(self, proxies: dict, timeout: float = SUSTAIN_SECONDS) -> float:
+        """تست سرعت دانلودِ «پایدار» روی یک تونل مشخص (Mbps).
+        مثل یک مرورگر واقعی: چند دانلودِ موازی از CDNهای متفاوت (کلادفلر ×۲ + فایل بزرگ
+        از CDN گوگل) به مدت ۶ ثانیه؛ سرعت فقط از ثانیه‌ی ۱.۵ به بعد حساب می‌شود تا اثر
+        slow-start حذف شود و «سرعتِ شروعِ خوب ولی قطعِ بعد از چند کیلوبایت» دیگر
+        به‌عنوان سرعتِ خوب ثبت نشود."""
+        if self.stop_flag.is_set():
             return 0.0
+        lock = threading.Lock()
+        samples = []                      # هر نخ: لیستِ (زمان، بایتِ تجمعی)
+        t_start = time.time()
+        deadline = t_start + timeout
+
+        def worker(url: str):
+            got = 0
+            pts = [(t_start, 0.0)]
+            try:
+                with SESSION.get(url, stream=True, proxies=proxies,
+                                 timeout=(5, timeout + 3)) as r:
+                    if r.status_code >= 400:
+                        return
+                    for chunk in r.iter_content(65536):
+                        got += len(chunk)
+                        now = time.time()
+                        if now - pts[-1][0] >= 0.3:
+                            pts.append((now, float(got)))
+                        if now >= deadline:
+                            break
+            except Exception:
+                pass
+            finally:
+                pts.append((time.time(), float(got)))
+                with lock:
+                    samples.append(pts)
+
+        ths = [threading.Thread(target=worker, args=(u,), daemon=True)
+               for u in SUSTAIN_ENDPOINTS]
+        for t in ths:
+            t.start()
+        for t in ths:
+            t.join(timeout + 4.0)
+        t_end = time.time()
+        t_cut = t_start + SUSTAIN_WARMUP
+        total_after = 0.0
+        total_all = 0.0
+        any_data = False
+        for pts in samples:
+            if not pts:
+                continue
+            b_cut = 0.0
+            for t, b in pts:
+                if t <= t_cut:
+                    b_cut = b               # آخرین نمونه‌ی قبل از پایان warmup
+            b_end = pts[-1][1]
+            total_all += b_end
+            if b_end - b_cut > 0:
+                any_data = True
+            total_after += max(0.0, b_end - b_cut)
+        span = t_end - t_cut
+        # حالتِ لینکِ خیلی سریع: کلِ فایل‌ها در همان warmup تمام شده — یعنی لینک قطعاً سریع است؛
+        # با میانگینِ warmup گزارشش می‌کنیم (کمی محافظه‌کارانه ولی به‌قدرِ کافی بالا).
+        if total_after >= 120_000 and any_data and span > 0.2:
+            return total_after * 8.0 / span / 1e6
+        if total_all >= 3_000_000:
+            return total_all * 8.0 / max(SUSTAIN_WARMUP, 0.1) / 1e6
+        return 0.0
 
     def _ul_speed_on_port(self, proxies: dict, timeout: float = 10.0) -> float:
         """تست سرعت آپلود روی یک تونل مشخص (Mbps)."""
@@ -1254,11 +1333,20 @@ class VpnEngine:
             self.log("⚠ هیچ کاندیدی سایت‌ها را باز نکرد — روش قدیمی (تست سرعت ساده) ادامه می‌دهد")
 
         if verified:
+            # سرعتِ پایدار اجباری است — دیگر هیچ‌وقت به نودِ بی‌سرعت وصل نمی‌شویم
             fast = [n for n in verified if n.speed >= MIN_GOOD_SPEED_MBPS]
-            cand = fast if fast else verified
-            # بهترین = بیشترین سرعت، بعد کم‌ترین پینگ (همه‌ی این‌ها کم‌پینگ‌ترین‌ها بودند)
-            best = max(cand, key=lambda n: (n.speed, -(n.latency or 0)))
-            return best, lat_ok
+            usable = [n for n in verified if n.speed >= MIN_USABLE_SPEED_MBPS]
+            if fast:
+                best = max(fast, key=lambda n: (n.speed, -(n.latency or 0)))
+                self.log(f"✓ انتخاب شد: {best.display()} — دانِ پایدار {best.speed:.1f} • "
+                         f"آپ {best.up_speed:.1f} Mbps — پینگ {int(best.latency or 0)}ms")
+                return best, lat_ok
+            if usable:
+                best = max(usable, key=lambda n: (n.speed, -(n.latency or 0)))
+                self.log(f"⚠ هیچ کاندیدِ سریعی نبود — بهترینِ قابل‌استفاده انتخاب شد: "
+                         f"{best.display()} ({best.speed:.1f} Mbps)")
+                return best, lat_ok
+            self.log("⚠ هیچ کاندیدی سرعتِ قابل‌استفاده نداشت — روشِ ساده ادامه می‌دهد")
 
         # fallback: هیچ کاندیدی تایید نشد → همان مسیر v1.3 (تست سرعت ساده)
         top = lat_ok[:TOP_SPEED_TESTS]
@@ -1279,12 +1367,16 @@ class VpnEngine:
                 self.log(f"   {n.display():<40} پینگ {int(n.latency):>4}ms  سرعت {n.speed:>6.1f} Mbps")
 
         fast = [n for n in top if n.speed >= MIN_GOOD_SPEED_MBPS]
+        usable = [n for n in top if n.speed >= MIN_USABLE_SPEED_MBPS]
         if fast:
             best = max(fast, key=lambda n: (n.speed, -n.latency))
-        elif top:
-            best = top[0]
+        elif usable:
+            best = max(usable, key=lambda n: (n.speed, -n.latency))
+            self.log(f"⚠ بهترینِ قابل‌استفاده (سرعت پایین): {best.display()} — {best.speed:.1f} Mbps")
         else:
+            # قبلاً اینجا best = top[0] بود → همان نودِ «فقط‌پینگی» وصل می‌شد. حالا: هیچ‌کس.
             best = None
+            self.log("✗ هیچ کاندیدی سرعتِ واقعی نداشت — اتصال انجام نمی‌شود (جلوگیری از نودِ فقط‌پینگی)")
         return best, lat_ok
 
     # ---------- مسیر سریع: سرورهای خوب قبلی ----------
@@ -1373,23 +1465,33 @@ class VpnEngine:
         return False
 
     def light_speed(self, bytes_to: int = 262144, timeout: float = 8.0) -> float:
-        """نمونه‌گیری سبک سرعت دانلود از داخل تونل فعال (هر ~۲۰ ثانیه یک‌بار)."""
+        """نمونه‌گیری سبک سرعت دانلود از داخل تونل فعال (هر ~۲۰ ثانیه یک‌بار).
+        ضد «صفرِ کاذب»: اگر لینک آن‌قدر سریع باشد که حجم اولیه در کمتر از ۰.۱۵ ثانیه
+        تمام شود، یک‌بار دیگر با حجم بزرگ‌تر اندازه می‌گیریم تا عدد واقعی دربیاید."""
         if not self.proc or self.proc.poll() is not None:
             return 0.0
         proxies = {"http": f"http://127.0.0.1:{self.http_port}",
                    "https": f"http://127.0.0.1:{self.http_port}"}
-        try:
-            t0 = time.time()
+
+        def fetch(size: int):
             total = 0
-            with SESSION.get(f"https://speed.cloudflare.com/__down?bytes={bytes_to}",
+            t0 = time.time()
+            with SESSION.get(f"https://speed.cloudflare.com/__down?bytes={size}",
                              stream=True, proxies=proxies, timeout=(5, timeout)) as r:
                 if r.status_code >= 400:
-                    return 0.0
+                    return 0, 0.0
                 for chunk in r.iter_content(65536):
                     total += len(chunk)
-                    if total >= bytes_to or time.time() - t0 > timeout:
+                    if total >= size or time.time() - t0 > timeout:
                         break
-            el = time.time() - t0
+            return total, time.time() - t0
+
+        try:
+            total, el = fetch(bytes_to)
+            if el < 0.15 and total >= bytes_to and bytes_to < 8_388_608 \
+                    and not self.stop_flag.is_set() \
+                    and self.proc and self.proc.poll() is None:
+                total, el = fetch(min(bytes_to * 8, 8_388_608))   # لینک خیلی سریع — دوباره
             if el <= 0.05 or total < 50_000:
                 return 0.0
             return total * 8.0 / el / 1e6
@@ -1445,6 +1547,18 @@ class VpnEngine:
             ok = False
         if ok and not self._real_site_ok(proxies, timeout=8):
             ok = False
+        # ===== دروازه‌ی سرعت (قبل از فعال‌کردن پروکسی سیستم) =====
+        # نودِ «فقط‌پینگی» اینجا هم اگر سرعت واقعی نداشته باشد رد می‌شود و
+        # _connect_with_fallback خودش سراغ کاندید بعدی می‌رود.
+        if ok:
+            gate = self.light_speed(bytes_to=1_000_000, timeout=8)
+            if gate < CONNECT_GATE_MBPS:
+                tail = self._read_err_tail(errlog)
+                self.disconnect(restore_proxy=False)
+                raise RuntimeError(
+                    f"تونل وصل شد ولی سرعت واقعی {gate:.1f} Mbps است "
+                    f"(کمتر از حداقل {CONNECT_GATE_MBPS}) — رد شد، رفتن به کاندید بعدی"
+                    + (f" — {tail}" if tail else ""))
         if not ok:
             tail = self._read_err_tail(errlog)
             self.disconnect(restore_proxy=False)

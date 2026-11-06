@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN v1.4 — رابط گرافیکی
+ManjarVPN v1.5 — رابط گرافیکی
 اسپلش انیمیشنی • کارت وضعیت • کارت سرور (متن وسط‌چین) • کارت‌های آمار
 دکمه گرادیانی سفارشی (متن همیشه نمایان) • نگهبان سبک + تعمیر بی‌صدا
 پنل «سرورهای تست‌شده» داخل پنجره‌ی اصلی (بدون پنجره‌ی جدا — رفع لیست خالی/هنگ)
 + دکمه‌ی بستن مشخص (✕) و کلید Escape
 خروج بدون خطا با دکمه‌ی ضربدر — حتی وقتی پروسه‌های تست در جریان‌اند
-جریان اتصال: پینگ ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ← سرعت دانلود/آپلود ← بهترین
+جریان اتصال: پینگ ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ← سرعتِ پایدار دانلود/آپلود ← بهترین
+نگهبانِ جدید: اگر سرعت تونل چند نمونه‌ی متوالی عملاً صفر باشد (نودِ فقط‌پینگی)
+→ تعویض بی‌صدای سرور، بدون دخالت کاربر
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import tkinter.font as tkfont
 import customtkinter as ctk
 
 from engine import (APP_NAME, VERSION, VpnEngine, Node, SESSION,
+                    LIVE_MIN_SPEED_MBPS, LIVE_SLOW_LIMIT,
                     SUBSCRIPTION_SOURCES, cleanup_stale_proxy,
                     decode_subscription, filter_supported, find_logo,
                     parse_uri)
@@ -668,7 +671,8 @@ class App(ctk.CTk):
                 if eng.stop_flag.is_set():
                     self.q.put(("idle", None)); return
                 if best is None:
-                    self.q.put(("error", "هیچ کانفیگ سالمی پیدا نشد — چند دقیقه دیگر تلاش کنید."))
+                    self.q.put(("error", "هیچ کانفیگی هم پینگ و هم سرعتِ واقعی نداشت "
+                                         "(دیگر به سرورِ «فقط‌پینگی» وصل نمی‌شویم) — چند دقیقه دیگر تلاش کنید."))
                     return
                 ranked = self._rank(ok_list)
                 self.q.put(("topnodes", ranked[:12]))
@@ -772,14 +776,16 @@ class App(ctk.CTk):
             if self.engine.proc is None and self.engine.stop_flag.is_set():
                 self.q.put(("idle", None))
 
-    # ---------------- نگهبان اتصال (چک سبک + تعمیر بی‌صدا) ----------------
+    # ---------------- نگهبان اتصال (چک سبک + حساس به سرعت + تعمیر بی‌صدا) ----------------
     def _live_monitor(self, epoch: int):
-        """هر ۴ ثانیه فقط یک چک ۲۰۴ سبک (نه دانلود ۱۲۸KB!). ۵ شکست پشت‌سرهم +
-        سالم بودن اینترنتِ اصلی → تعمیر بی‌صدای تونل (بدون رفتن به حالت تست کامل).
-        قطع‌های کاذبِ نسخه قبل از اینجا می‌آمد: دانلود حجمی هر ۳ ثانیه روی سرورهای
-        شلوغ تایم‌اوت می‌شد و اتصال سالم قطع می‌شد."""
+        """هر ۴ ثانیه فقط یک چک ۲۰۴ سبک. به‌علاوه هر ~۸ ثانیه یک نمونه‌ی سرعتِ کوچک:
+        اگر «پینگ» جواب بدهد ولی سرعت چند نمونه‌ی متوالی عملاً صفر باشد، یعنی به همان
+        نودِ «فقط‌پینگی» وصلیم → تعمیر بی‌صدا (تعویض سرور) بدون دخالت کاربر.
+        قطع‌های کاذبِ نسخه‌های قبل از اینجا می‌آمد: دانلود حجمی هر ۳ ثانیه روی سرورهای
+        شلوغ تایم‌اوت می‌شد و اتصال سالم قطع می‌شد — دانلودِ اینجا کوچک و محدود است."""
         eng = self.engine
         fails = 0
+        slow = 0
         checks = 0
         uploaded = False
         time.sleep(5)
@@ -795,11 +801,26 @@ class App(ctk.CTk):
                     self.q.put(("status", ("متصل", GREEN)))
                 fails = 0
                 checks += 1
-                # نمونه سرعت سبک فقط هر ~۲۰ ثانیه (بدون فشار به سرور)
-                if checks % 5 == 0:
+                # نمونه‌ی سرعت سبک هر ~۸ ثانیه: نمایش + تشخیصِ «پینگ دارد، دیتا ندارد»
+                if checks % 2 == 0:
                     mbps = eng.light_speed()
-                    if mbps > 0 and not self._closing and eng.conn_epoch == epoch:
+                    if self._closing or eng.conn_epoch != epoch:
+                        return
+                    if mbps >= LIVE_MIN_SPEED_MBPS:
+                        slow = 0
                         self.q.put(("livespeed", mbps))
+                    else:
+                        slow += 1
+                        if slow == 1:
+                            self.q.put(("log", "⚠ سرعت تونل افت کرد — زیر نظر…"))
+                        elif slow == LIVE_SLOW_LIMIT - 1:
+                            self.q.put(("log", "⚠ سرعت تقریباً صفر است…"))
+                    if slow >= LIVE_SLOW_LIMIT:
+                        # پینگ سالم است ولی دیتا رد نمی‌شود → همان نودِ فقط‌پینگی؛ تعویض
+                        self.q.put(("log", "⚠ تونل «فقط‌پینگی» شد (پینگ دارد، سرعت ندارد) — تعویض بی‌صدای سرور…"))
+                        self.q.put(("status", ("تعویض سرور — سرعت صفر است…", AMBER)))
+                        self.q.put(("repair", epoch))
+                        return
                 if not uploaded:
                     uploaded = True
                     up = eng.measure_upload()

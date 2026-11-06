@@ -27,10 +27,12 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Download Xray core
+      - name: Download Xray core (نسخه پین‌شده — latest نیست تا رفتار برنامه ثابت بماند)
         shell: pwsh
+        env:
+          XRAY_VER: "v26.10.31"
         run: |
-          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/download/$env:XRAY_VER/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath "xraybin"
           Copy-Item "xraybin\xray.exe" -Destination "."
 
