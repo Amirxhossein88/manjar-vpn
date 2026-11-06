@@ -12,6 +12,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
+import java.net.Inet4Address;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -60,7 +62,8 @@ public class VpnEngine {
     public static final double TCP_PREFILTER_TIMEOUT = 2.0;
     public static final int MAX_TEST_NODES = 1200;
     public static final int MAX_XRAY_LATENCY_TESTS = 320;
-    public static final int CONCURRENT_TESTS = 10;           // ویندوز ۱۴ — چند Xrayِ همزمان روی موبایل
+    public static final int CONCURRENT_TESTS = 6;            // ویندوز ۱۴ — روی موبایل حافظه‌ی کمتر → Xrayِ همزمانِ کمتر (هر هسته ~۳۶MB)
+    public static final double XRAY_START_TIMEOUT = 4.0;     // ویندوز ۲ — فلشِ کندِ گوشی + بارِ صفحه‌ی ۳۶ مگابایتی → صبرِ بیشتر
     public static final int LATENCY_RETRY_MAX = 80;
     public static final double LATENCY_TIMEOUT = 5.0;
     public static final int DEEP_POOL = 40;
@@ -86,6 +89,8 @@ public class VpnEngine {
     public volatile boolean stopFlag = false;
     public String xrayPath;
     public volatile Process mainProc;
+    public volatile String lastXrayErr = "";   // آخرین خطای stderr هسته — برای تشخیصِ دقیق روی گوشی
+    private volatile boolean xrayStartFailLogged = false;
     public volatile int socksPort = SOCKS_PORT;
     public volatile int apiPort = API_PORT;
     public volatile int relayPort = RELAY_PORT;
@@ -186,12 +191,14 @@ public class VpnEngine {
             ProcessBuilder pb = new ProcessBuilder(xrayPath, "run", "-c", cfgPath);
             pb.redirectErrorStream(false);
             Process p = pb.start();
-            // مصرفِ خروجی‌ها تا بلاک نشود
+            // مصرفِ خروجی‌ها تا بلاک نشود — stderr برای تشخیصِ خطا نگه داشته می‌شود
             drain(p.getInputStream());
-            drain(p.getErrorStream());
+            drainErr(p.getErrorStream());
             return p;
         } catch (Exception e) {
-            log("✗ اجرای هسته Xray ممکن نشد: " + e.getClass().getSimpleName());
+            lastXrayErr = "exec: " + e.getClass().getSimpleName() +
+                    (e.getMessage() != null ? " (" + e.getMessage() + ")" : "");
+            log("✗ اجرای هسته Xray ممکن نشد: " + lastXrayErr);
             return null;
         }
     }
@@ -201,6 +208,30 @@ public class VpnEngine {
         Thread t = new Thread(() -> {
             byte[] b = new byte[4096];
             try { while (is.read(b) >= 0) { /* discard */ } } catch (Exception ignored) {}
+        });
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** stderr هسته را جمع می‌کند تا اگر Xray بالا نیامد، علتِ واقعی دیده شود. */
+    private void drainErr(final InputStream is) {
+        if (is == null) return;
+        Thread t = new Thread(() -> {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[2048];
+            try {
+                int n;
+                while ((n = is.read(b)) >= 0) {
+                    bos.write(b, 0, n);
+                    if (bos.size() > 16384) bos.reset();
+                }
+            } catch (Exception ignored) {}
+            String s = new String(bos.toByteArray(), StandardCharsets.UTF_8).trim();
+            if (!s.isEmpty()) {
+                int nl = s.indexOf('\n');
+                if (nl > 0) s = s.substring(0, nl);
+                lastXrayErr = s.length() > 300 ? s.substring(0, 300) : s;
+            }
         });
         t.setDaemon(true);
         t.start();
@@ -519,7 +550,7 @@ public class VpnEngine {
         if (stopFlag) return null;
         int port = nextTestPort();
         JSONObject cfg;
-        try { cfg = Subs.buildXrayConfig(node, port, 0, node.server, node.port); }
+        try { cfg = Subs.buildXrayConfig(withResolvedIp(node), port, 0, node.server, node.port); }
         catch (Exception e) { return null; }
         if (cfg == null) return null;
         File tmp = new File(ctx.getCacheDir(), "manjarvpn_lat_" + port + ".json");
@@ -529,7 +560,14 @@ public class VpnEngine {
             proc = startXray(tmp.getAbsolutePath(), "lat");
             if (proc == null) return null;
             testProcs.add(proc);
-            if (!waitPort(port, 2.0)) return null;
+            if (!waitPort(port, XRAY_START_TIMEOUT)) {
+                funnel("xray_start_fail", lastXrayErr.isEmpty() ? "هسته بالا نیامد" : lastXrayErr);
+                if (!xrayStartFailLogged) {
+                    xrayStartFailLogged = true;
+                    log("✗ هسته‌ی Xray بالا نیامد" + (lastXrayErr.isEmpty() ? "" : ": " + lastXrayErr));
+                }
+                return null;
+            }
             long t0 = System.currentTimeMillis();
             try {
                 int code = httpGetViaSocks(port, "cp.cloudflare.com", "/generate_204", "cp.cloudflare.com",
@@ -594,7 +632,7 @@ public class VpnEngine {
         if (stopFlag) return null;
         int port = nextTestPort();
         JSONObject cfg;
-        try { cfg = Subs.buildXrayConfig(node, port, 0, node.server, node.port); }
+        try { cfg = Subs.buildXrayConfig(withResolvedIp(node), port, 0, node.server, node.port); }
         catch (Exception e) { return null; }
         if (cfg == null) return null;
         File tmp = new File(ctx.getCacheDir(), "manjarvpn_deep_" + port + ".json");
@@ -604,7 +642,10 @@ public class VpnEngine {
             proc = startXray(tmp.getAbsolutePath(), "deep");
             if (proc == null) return null;
             testProcs.add(proc);
-            if (!waitPort(port, 2.0)) return null;
+            if (!waitPort(port, XRAY_START_TIMEOUT)) {
+                funnel("xray_start_fail", lastXrayErr.isEmpty() ? "هسته بالا نیامد" : lastXrayErr);
+                return null;
+            }
 
             // ۱) سایت‌های واقعی
             List<String> opened = checkSites(port);
@@ -699,12 +740,25 @@ public class VpnEngine {
     }
 
     // ============================ پیش‌فیلتر TCP ============================
-    private boolean tcpAlive(String server, int port) {
-        try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(server, port), (int) (TCP_PREFILTER_TIMEOUT * 1000));
-            return true;
+    /**
+     * اتصال TCP به سرور — و مهم‌تر: دی‌ان‌اس را همین‌جا در جاوا حل می‌کنیم (کارتِ سیستم،
+     * مطمئن) و آی‌پی را در extra["ip"] نگه می‌داریم تا کانفیگِ Xray با آی‌پی ساخته شود
+     * و وابسته‌ی دی‌ان‌اسِ داخلِ زیرپروسه‌ی هسته نباشد. خروجی: آی‌پی یا null.
+     */
+    private String tcpAliveResolve(String server, int port) {
+        String pick = null;
+        try {
+            InetAddress[] all = InetAddress.getAllByName(server);
+            for (InetAddress a : all) if (a instanceof Inet4Address) { pick = a.getHostAddress(); break; }
+            if (pick == null && all.length > 0) pick = all[0].getHostAddress();
         } catch (Exception e) {
-            return false;
+            pick = server;   // شاید هاستِ واقعی مستقیم کار کند — به پیش‌فیلتر سپرده می‌شود
+        }
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(pick, port), (int) (TCP_PREFILTER_TIMEOUT * 1000));
+            return pick;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -716,7 +770,8 @@ public class VpnEngine {
         for (Subs.Node n : nodes) {
             ex.submit(() -> {
                 if (stopFlag) return;
-                if (tcpAlive(n.server, n.port)) alive.add(n);
+                String ip = tcpAliveResolve(n.server, n.port);
+                if (ip != null) { n.extra.put("ip", ip); alive.add(n); }
                 int d = done.incrementAndGet();
                 if (d % 50 == 0 || d == total)
                     progress("tcp", d, total, "پیش‌فیلتر سرورها " + d + "/" + total + " — " + alive.size() + " سرور زنده");
@@ -728,9 +783,24 @@ public class VpnEngine {
     }
 
     // ============================ اسکن کامل ============================
+    /**
+     * کپیِ نود با آی‌پیِ حل‌شده (extra["ip"]) به‌جای دامنه در فیلدِ اتصالِ خروجیِ Xray —
+     * SNI/Host/Reality همان دامنه‌ی اصلی می‌مانند. اگر آی‌پی نبود، همان نود برمی‌گردد.
+     */
+    private Subs.Node withResolvedIp(Subs.Node n) {
+        String ip = n.extra.get("ip");
+        if (ip == null || ip.isEmpty() || ip.equals(n.server)) return n;
+        Subs.Node c = new Subs.Node(n.proto, n.name, ip, n.port);
+        c.uri = n.uri; c.latency = n.latency; c.speed = n.speed; c.upSpeed = n.upSpeed;
+        c.extra.putAll(n.extra);
+        if (c.extra.get("sni") == null || c.extra.get("sni").isEmpty()) c.extra.put("sni", n.server);
+        return c;
+    }
+
     public Subs.Node scan(List<Subs.Node> nodesIn) {
         scanStats.clear();
         reasonsMap.clear();
+        xrayStartFailLogged = false;
         scanStats.put("fetched", nodesIn.size());
         List<Subs.Node> nodes = nodesIn;
         // کانفیگ‌های شخصی هرگز حذف نمی‌شوند
@@ -888,7 +958,7 @@ public class VpnEngine {
     private double simpleSpeedTest(Subs.Node node) {
         int port = nextTestPort();
         JSONObject cfg;
-        try { cfg = Subs.buildXrayConfig(node, port, 0, node.server, node.port); }
+        try { cfg = Subs.buildXrayConfig(withResolvedIp(node), port, 0, node.server, node.port); }
         catch (Exception e) { return 0; }
         if (cfg == null) return 0;
         File tmp = new File(ctx.getCacheDir(), "manjarvpn_sp_" + port + ".json");
@@ -898,7 +968,10 @@ public class VpnEngine {
             proc = startXray(tmp.getAbsolutePath(), "sp");
             if (proc == null) return 0;
             testProcs.add(proc);
-            if (!waitPort(port, 2.0)) return 0;
+            if (!waitPort(port, XRAY_START_TIMEOUT)) {
+                funnel("xray_start_fail", lastXrayErr.isEmpty() ? "هسته بالا نیامد" : lastXrayErr);
+                return 0;
+            }
             double v = dlSpeedViaSocks(port, Subs.SPEED_ENDPOINTS[0], DL_TEST_CAP_BYTES, 8.0);
             return Math.max(0, v);
         } catch (Exception e) {
