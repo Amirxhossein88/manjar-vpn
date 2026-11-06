@@ -9,6 +9,9 @@ ManjarVPN v1.5 — رابط گرافیکی
 جریان اتصال: پینگ ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ← سرعتِ پایدار دانلود/آپلود ← بهترین
 نگهبانِ جدید: اگر سرعت تونل چند نمونه‌ی متوالی عملاً صفر باشد (نودِ فقط‌پینگی)
 → تعویض بی‌صدای سرور، بدون دخالت کاربر
+نجات هوشمند (v1.6): اگر هیچ سروری جواب نداد، برنامه وضعیت را در یک پرامت
+خلاصه می‌کند، از هوش مصنوعی کانفیگ تازه می‌گیرد، کامل تستش می‌کند و وصل می‌شود
+(این کانفیگ‌ها موقت‌اند — در حافظه‌ی سرورهای خوب ذخیره نمی‌شوند)
 """
 from __future__ import annotations
 
@@ -24,7 +27,7 @@ import tkinter.font as tkfont
 import customtkinter as ctk
 
 from engine import (APP_NAME, VERSION, VpnEngine, Node, SESSION,
-                    LIVE_MIN_SPEED_MBPS, LIVE_SLOW_LIMIT,
+                    LIVE_MIN_SPEED_MBPS, LIVE_SLOW_LIMIT, AI_RESCUE_ENABLED,
                     SUBSCRIPTION_SOURCES, cleanup_stale_proxy,
                     decode_subscription, filter_supported, find_logo,
                     parse_uri)
@@ -353,6 +356,7 @@ class App(ctk.CTk):
         self.app_state = "starting"   # starting | idle | busy | connected
         self.top_nodes: list = []
         self._fail_attempts = 0
+        self._ai_rescue_used = 0      # سهمیه‌ی نجات هوشمند در هر نشست (بعد از اتصال موفق صفر می‌شود)
         self._closing = False
         self._bar_target = 0.0
         self._eq_h = [6] * 6
@@ -671,8 +675,38 @@ class App(ctk.CTk):
                 if eng.stop_flag.is_set():
                     self.q.put(("idle", None)); return
                 if best is None:
-                    self.q.put(("error", "هیچ کانفیگی هم پینگ و هم سرعتِ واقعی نداشت "
-                                         "(دیگر به سرورِ «فقط‌پینگی» وصل نمی‌شویم) — چند دقیقه دیگر تلاش کنید."))
+                    # ===== نجات هوشمند (v1.6): کانفیگ تازه از هوش مصنوعی =====
+                    if AI_RESCUE_ENABLED and self._ai_rescue_used < 2:
+                        self._ai_rescue_used += 1
+                        st = dict(eng.scan_stats)
+                        diag = {
+                            "fetched": st.get("fetched", len(nodes)),
+                            "tcp_alive": st.get("tcp_alive", 0),
+                            "latency_ok": st.get("latency_ok", len(ok_list)),
+                            "verified": st.get("verified", 0),
+                            "usable": st.get("usable", 0),
+                            "direct_ok": True,
+                        }
+                        self.q.put(("status", ("هیچ سروری جواب نداد — کانفیگ تازه از هوش مصنوعی…", AMBER)))
+                        ai_nodes = eng.ai_rescue(diag, existing_keys={n.key() for n in nodes})
+                        if eng.stop_flag.is_set():
+                            self.q.put(("idle", None)); return
+                        if ai_nodes:
+                            self.q.put(("log", f"🤖 {len(ai_nodes)} کانفیگ تازه گرفتم — تست کامل (پینگ ← سایت‌ها ← سرعت)…"))
+                            best2, ok2 = eng.scan(ai_nodes)
+                            if eng.stop_flag.is_set():
+                                self.q.put(("idle", None)); return
+                            if best2 is not None:
+                                ranked2 = self._rank(ok2)
+                                self.q.put(("topnodes", ranked2[:12]))
+                                self.q.put(("log", f"★ بهترین (کانفیگ تازه): {best2.display()} — "
+                                                   f"پینگ {int(best2.latency or 0)}ms، سرعت {best2.speed:.1f}Mbps"))
+                                actual = self._connect_with_fallback(best2, ranked2)
+                                self.q.put(("connected", actual))
+                                return
+                        self.q.put(("log", "✗ کانفیگ‌های هوش مصنوعی هم جواب نداد"))
+                    self.q.put(("error", "هیچ کانفیگی هم پینگ و هم سرعتِ واقعی نداشت — حتی کانفیگ‌های تازه‌ی "
+                                         "هوش مصنوعی جواب نداد. چند دقیقه دیگر دوباره تلاش کنید."))
                     return
                 ranked = self._rank(ok_list)
                 self.q.put(("topnodes", ranked[:12]))
@@ -895,6 +929,7 @@ class App(ctk.CTk):
     def _on_repaired(self, node):
         if self._closing:
             return
+        self._ai_rescue_used = 0
         self.app_state = "connected"
         self._fail_attempts = 0
         self._set_status("متصل", GREEN)
@@ -988,6 +1023,7 @@ class App(ctk.CTk):
     def _on_connected(self, node):
         self.app_state = "connected"
         self._fail_attempts = 0
+        self._ai_rescue_used = 0        # اتصال موفق — سهمیه‌ی نجات دوباره پر شد
         self._bar_target = 1.0
         self.phase_lbl.configure(text="متصل ✓")
         self.spinner.place_forget()

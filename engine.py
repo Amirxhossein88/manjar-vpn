@@ -1,14 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine v1.5
+ManjarVPN Engine v1.6
 =====================
-مهم‌ترین تغییر این نسخه: «اتصال فقط وقتی مجاز است که سرعت واقعی هم داشته باشد».
-نودِ «فقط‌پینگی» (پینگ می‌دهد ولی هیچ داده‌ای رد نمی‌کند) در هر چهار مرحله رد می‌شود:
+جدید در v1.6 — «نجات هوشمند»:
+  اگر هیچ سروری جواب نداد، برنامه خودش وضعیت را در یک پرامت خلاصه می‌کند، به یک
+  هوش مصنوعی می‌دهد (پیش‌فرض: سرویس رایگان Pollinations بدون کلید؛ یا endpoint
+  شخصیِ سازگار با OpenAI) و کانفیگ‌های تازه‌اش را می‌گیرد، کامل تست می‌کند و
+  وصل می‌شود. این کانفیگ‌ها «موقت»‌اند: در حافظه‌ی سرورهای خوب ذخیره نمی‌شوند.
+  + ۷ منبع کانفیگ تازه (۳۷ منبع) + دور دوم/سوم تست عمیق وقتی دور اول هیچی پیدا نکرد.
+مهم‌ترین تغییر v1.5: «اتصال فقط وقتی مجاز است که سرعت واقعی هم داشته باشد».
+نودِ «فقط‌پینگی» در هر چهار مرحله رد می‌شود:
   ۱) تست عمیق: سرعتِ «پایدار» (۳ دانلود موازی مثل مرورگر، بدون یک‌وَک اولیه) زیر حداقل → رد
-  ۲) اسکن: هیچ کاندیدِ بدونِ حداقلِ سرعت انتخاب نمی‌شود (دیگر به نودِ بی‌سرعت وصل نمی‌شود)
-  ۳) دروازه‌ی اتصال: قبل از روشن‌کردن پروکسی سیستم، سرعت تونل سنجیده می‌شود؛ اگر خالی بود → کاندید بعدی
+  ۲) اسکن: هیچ کاندیدِ بدونِ حداقلِ سرعت انتخاب نمی‌شود
+  ۳) دروازه‌ی اتصال: قبل از روشن‌کردن پروکسی سیستم، سرعت تونل سنجیده می‌شود
   ۴) نگهبان: اگر سرعت تونل چند نمونه‌ی متوالی عملاً صفر باشد → تعویض بی‌صدای سرور
-موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۳۰ منبع زنده، پیش‌فیلتر TCP،
+موتور سریع برنامه: دریافت موازی کانفیگ‌ها از ۳۷ منبع زنده، پیش‌فیلتر TCP،
 تست پینگ، سپس «تست عمیق» هر کاندید با یک هسته Xray: باز کردن واقعی
 یوتوب / اینستاگرام / تلگرام از داخل همان تونل + تست سرعت واقعی دانلود و آپلود،
 و در پایان اتصال به سروری که هم پینگ و هم سرعت بهتری دارد و سایت‌ها را واقعا باز کرده،
@@ -39,10 +45,10 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 # ============================ تنظیمات قابل تغییر ============================
-MAX_TEST_NODES = 800          # حداکثر کانفیگ برای پیش‌فیلتر TCP
+MAX_TEST_NODES = 1200         # حداکثر کانفیگ برای پیش‌فیلتر TCP (v1.6: ۸۰۰ → ۱۲۰۰)
 TCP_PREFILTER_WORKERS = 200   # اتصال‌های همزمان TCP (خیلی سبک است)
 TCP_PREFILTER_TIMEOUT = 1.5   # ثانیه
 MAX_XRAY_LATENCY_TESTS = 380  # بعد از پیش‌فیلتر، حداکثر تست پینگ واقعی
@@ -93,6 +99,7 @@ SITE_TARGETS = [
 ]
 SITE_MIN_PASS = 2             # حداقل چند سایت از ۳ باید باز شود تا کاندید تایید شود
 DEEP_POOL = 40                # کم‌پینگ‌ترین‌ها که تست عمیق می‌شوند
+DEEP_ROUNDS = 3               # v1.6: اگر دور اول هیچ کاندیدی تایید نکرد، ۴۰ تای بعدی هم تست می‌شوند (تا ۳ دور)
 DEEP_TARGET = 12              # به‌محض این تعداد نتیجه‌ی کامل، بقیه رها می‌شوند
 DEEP_WORKERS = 3              # چند کاندید همزمان تست عمیق شوند (کمتر = اعداد تمیزتر)
 SITE_TIMEOUT = 6              # ثانیه برای هر سایت
@@ -119,7 +126,7 @@ XRAY_HTTP_PORT = 10809
 UA = {"User-Agent": f"{APP_NAME}/{VERSION}"}
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# ============================ منابع کانفیگ (۲۹ منبع زنده) ============================
+# ============================ منابع کانفیگ (۳۷ منبع زنده) ============================
 SUBSCRIPTION_SOURCES = [
     # barry-far — دسته‌های اصلی
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
@@ -156,6 +163,14 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/vless",
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/vmess",
     "https://raw.githubusercontent.com/ircfspace/tvc/main/sub/trojan",
+    # ===== v1.6 — منابع تازه‌تر (همه تست‌شده و زنده) =====
+    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/all/configs.txt",
+    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/fast/configs.txt",
+    "https://raw.githubusercontent.com/MohammadBahemmat/V2ray-Collector/main/all_servers.txt",
+    "https://raw.githubusercontent.com/DukeMehdi/FreeList-V2ray-Configs/main/Configs/All-DukeMehdi-Configs.txt",
+    "https://raw.githubusercontent.com/Alirewa/V2ray-Configs/main/config.txt",
+    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/base64/all_sub.txt",
+    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge_base64.txt",
 ]
 
 MIRROR_TEMPLATES = [
@@ -178,6 +193,83 @@ MODERN_SS_METHODS = {
     "xchacha20-poly1305", "xchacha20-ietf-poly1305", "none", "plain",
     "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305",
 }
+
+
+# ============================ نجاتِ هوشمند (v1.6) ============================
+# اگر هیچ سروری جواب نداد، برنامه وضعیت را در یک پرامت خلاصه می‌کند، به یک
+# هوش مصنوعی می‌دهد و کانفیگ‌های تازه‌اش را می‌گیرد، کامل تست می‌کند و وصل می‌شود.
+# این کانفیگ‌ها «موقت»‌اند: extra["ai"]=True → در حافظه‌ی سرورهای خوب ذخیره نمی‌شوند.
+AI_RESCUE_ENABLED = True
+AI_RESCUE_MAX_ROUNDS = 2          # چند دور از هوش مصنوعی بپرسیم (پرامتِ هر دور کمی متفاوت است)
+AI_RESCUE_MAX_URIS = 60           # سقف کانفیگ استخراجی از هر پاسخ
+AI_RESCUE_MAX_LINKS = 3           # حداکثر لینک اشتراک عمومی که در پاسخ دنبال می‌شود
+AI_RESCUE_TIMEOUT = 90            # ثانیه برای پاسخ مدل
+AI_FREE_RETRY_WAIT = 47           # سرویسِ رایگان: ۱ پاسخ در ۴۵ ثانیه — بین دورها صبر می‌کنیم
+POLLINATIONS_URL = "https://text.pollinations.ai/"
+# نکته (تست واقعی ۲۰۲۶-۱۱): فقط مدلِ «openai-fast» روی سرویس رایگان مانده و
+# مدل‌های استدلالی بدون reasoning_effort=low خطای token-limit می‌دهند.
+POLLINATIONS_MODEL = "openai-fast"
+AI_SETTINGS_FILE = "ai_settings.json"   # اختیاری: endpoint سازگار با OpenAI (OpenRouter و …)
+
+_AI_URI_RE = re.compile(r"\b(?:vless|vmess|trojan|ss|ssr)://[^\s\"'<>\\]+", re.I)
+_AI_SUB_RE = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
+
+
+def load_ai_settings() -> dict:
+    """تنظیمات اختیاری کاربر برای endpoint سازگار با OpenAI.
+    فایل: %APPDATA%/ManjarVPN/ai_settings.json →
+      {"base_url": "https://.../v1", "api_key": "...", "model": "..."}
+    اگر نباشد، سرویس رایگان Pollinations (بدون کلید) استفاده می‌شود."""
+    try:
+        with open(os.path.join(_cache_dir(), AI_SETTINGS_FILE), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def build_rescue_prompt(diag: dict, round_no: int = 0) -> str:
+    """پرامتِ نجات: شرحِ وضعیت + درخواستِ فهرستِ منابعِ تازه و چند کانفیگ نمونه.
+    لحنِ خنثی و فنی (تستِ واقعی: درخواستِ «دور زدن فیلتر» از بعضی مدل‌ها رد می‌شود؛
+    درخواستِ «منابع عمومیِ به‌روز برای کلاینت اوپن‌سورس» پاسخ می‌گیرد).
+    مدل‌ها ممکن است کانفیگ‌های غلط بدهند — مهم نیست: برنامه همه را کامل تست می‌کند."""
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    lines = [
+        f"I maintain an open-source, personal VPN client (parses vless:// vmess:// trojan:// ss:// URIs). Today, {when}, its automated test run failed:",
+        f"- {diag.get('fetched', '?')} configs fetched from public aggregator feeds, "
+        f"{diag.get('tcp_alive', '?')} reachable by TCP, {diag.get('latency_ok', '?')} passed ping, "
+        f"{diag.get('verified', '?')} opened real sites, {diag.get('usable', '?')} had usable download speed.",
+        "- The public subscription feeds it reads were all stale or dead today.",
+        "",
+        "Please reply with:",
+        "1) Public GitHub repositories or raw.githubusercontent.com subscription URLs that are ACTIVELY "
+        "UPDATED (ideally daily, by automation) and publish free vless/vmess/trojan/shadowsocks config lists.",
+        "2) Up to 10 example config URIs from such public lists, in standard URI format "
+        "(vless://... vmess://... trojan://... ss://...).",
+    ]
+    if round_no:
+        lines.append("Prefer less-known sources than the usual big Telegram aggregators.")
+    lines += [
+        "",
+        "Output format: one item per line (URLs and URIs mixed). No explanations, no markdown, no code fences.",
+    ]
+    return "\n".join(lines)
+
+
+def extract_uris_from_ai(text: str, max_uris: int = AI_RESCUE_MAX_URIS) -> tuple:
+    """از پاسخِ مدل (حتی اگر داخل توضیح/markdown باشد): کانفیگ‌ها + لینک‌های اشتراک."""
+    uris, subs = [], []
+    for m in _AI_URI_RE.finditer(text or ""):
+        u = m.group(0).rstrip(".,;)")
+        if u not in uris:
+            uris.append(u)
+    for m in _AI_SUB_RE.finditer(text or ""):
+        u = m.group(0).rstrip(".,;)")
+        if "pollinations" in u or "github.com/XTLS" in u:
+            continue
+        if u not in subs:
+            subs.append(u)
+    return uris[:max_uris], subs[:AI_RESCUE_MAX_LINKS]
 
 
 # ============================ مدل داده ============================
@@ -778,6 +870,7 @@ class VpnEngine:
         self.test_procs_lock = threading.Lock()
         self._port_counter = itertools.count(1)
         self._port_lock = threading.Lock()
+        self.scan_stats: dict = {}          # آمار آخرین اسکن — برای پرامتِ نجات هوشمند
         self._features_logged = False
 
     # ---------- callbacks ----------
@@ -1284,7 +1377,9 @@ class VpnEngine:
 
     # ---------- اسکن کامل ----------
     def scan(self, nodes: list):
-        """پیش‌فیلتر TCP → پینگ موازی → تست سرعت بهترین‌ها. خروجی: (بهترین، سالم‌ها)"""
+        """پیش‌فیلتر TCP → پینگ موازی → تست عمیق (تا ۳ دور اگر دور اول خالی بود) → بهترین. خروجی: (بهترین، سالم‌ها)"""
+        stats = {"fetched": len(nodes)}
+        self.scan_stats = stats
         try:
             self.ensure_features()
         except Exception:
@@ -1294,6 +1389,7 @@ class VpnEngine:
             self.log(f"→ نمونه‌گیری تصادفی: بررسی {len(nodes)} کانفیگ")
 
         alive = self.tcp_prefilter(nodes)
+        stats["tcp_alive"] = len(alive)
         if self.stop_flag.is_set():
             return None, []
         self.log(f"⚡ پیش‌فیلتر: {len(alive)} سرور از {len(nodes)} زنده — شروع تست پینگ")
@@ -1319,12 +1415,25 @@ class VpnEngine:
         if self.stop_flag.is_set():
             return None, lat_ok
         lat_ok.sort(key=lambda n: n.latency)
+        stats["latency_ok"] = len(lat_ok)
         self.log(f"✓ پینگ تمام شد: {len(lat_ok)} کانفیگ سالم از {len(alive)}")
 
         # ---- مرحله‌ی «تست عمیق»: با کم‌پینگ‌ترین‌ها، یوتوب/اینستاگرام/تلگرام ----
         # واقعا باز می‌شوند + سرعت دانلود و آپلود واقعی هر کدام سنجیده می‌شود.
-        pool = lat_ok[:DEEP_POOL]
-        verified = self.deep_pool_test(pool, target=DEEP_TARGET)
+        # v1.6: اگر دور اول هیچ کاندیدی تایید نکرد، ۴۰ کاندید بعدی هم امتحان می‌شود (تا DEEP_ROUNDS دور).
+        verified = []
+        pool_start = 0
+        for rnd in range(DEEP_ROUNDS):
+            pool = lat_ok[pool_start:pool_start + DEEP_POOL]
+            if not pool:
+                break
+            if rnd:
+                self.log(f"↻ دور {rnd + 1}: {len(pool)} کاندیدِ بعدی هم تست عمیق می‌شوند…")
+            verified.extend(self.deep_pool_test(pool, target=DEEP_TARGET))
+            if verified:
+                break
+            pool_start += DEEP_POOL
+        stats["verified"] = len(verified)
         if self.stop_flag.is_set():
             return None, lat_ok
         if verified:
@@ -1336,6 +1445,7 @@ class VpnEngine:
             # سرعتِ پایدار اجباری است — دیگر هیچ‌وقت به نودِ بی‌سرعت وصل نمی‌شویم
             fast = [n for n in verified if n.speed >= MIN_GOOD_SPEED_MBPS]
             usable = [n for n in verified if n.speed >= MIN_USABLE_SPEED_MBPS]
+            stats["usable"] = len(usable)
             if fast:
                 best = max(fast, key=lambda n: (n.speed, -(n.latency or 0)))
                 self.log(f"✓ انتخاب شد: {best.display()} — دانِ پایدار {best.speed:.1f} • "
@@ -1368,6 +1478,7 @@ class VpnEngine:
 
         fast = [n for n in top if n.speed >= MIN_GOOD_SPEED_MBPS]
         usable = [n for n in top if n.speed >= MIN_USABLE_SPEED_MBPS]
+        stats["usable"] = stats.get("usable", 0) or len(usable)
         if fast:
             best = max(fast, key=lambda n: (n.speed, -n.latency))
         elif usable:
@@ -1435,6 +1546,8 @@ class VpnEngine:
         entries = load_cache()
         by_uri = {e["uri"]: e for e in entries}
         for n in [best] + list(runners[:5]):
+            if n is None or n.extra.get("ai"):
+                continue            # کانفیگ‌های موقتِ هوش مصنوعی ذخیره نمی‌شوند (موقعیتِ فعلی فقط)
             if not n.uri or n.speed <= 0:
                 continue
             by_uri[n.uri] = {"uri": n.uri, "latency": int(n.latency or 0),
@@ -1444,6 +1557,123 @@ class VpnEngine:
                              "ts": time.time()}
         entries = sorted(by_uri.values(), key=lambda e: -float(e.get("speed", 0)))
         save_cache(entries)
+
+    # ---------- نجاتِ هوشمند: گرفتن کانفیگ تازه از هوش مصنوعی (v1.6) ----------
+    def _ai_ask(self, prompt: str, settings: dict, timeout: float = AI_RESCUE_TIMEOUT) -> str | None:
+        """پرامت را به هوش مصنوعی می‌دهد. ترتیب:
+        ۱) endpoint شخصیِ سازگار با OpenAI (اگر کاربر در ai_settings.json ست کرده باشد)
+        ۲) سرویس رایگان Pollinations — بدون کلید (مدل‌های openai و mistral پشت‌سرهم امتحان می‌شوند)"""
+        base = (settings.get("base_url") or "").strip().rstrip("/")
+        if base:
+            try:
+                headers = {"Content-Type": "application/json"}
+                key = (settings.get("api_key") or "").strip()
+                if key:
+                    headers["Authorization"] = f"Bearer {key}"
+                body = {"model": settings.get("model") or "gpt-4o-mini",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.8}
+                r = SESSION.post(f"{base}/chat/completions", json=body,
+                                 headers=headers, timeout=(10, timeout))
+                if r.status_code < 400:
+                    txt = r.json()["choices"][0]["message"]["content"]
+                    if txt and txt.strip():
+                        self.log(f"🤖 پاسخ از endpoint شخصی گرفته شد ({settings.get('model') or 'gpt-4o-mini'})")
+                        return txt
+                else:
+                    self.log(f"✗ endpoint شخصی خطا داد ({r.status_code}) — سرویس رایگان امتحان می‌شود")
+            except Exception as e:
+                self.log(f"✗ endpoint شخصی جواب نداد ({type(e).__name__}) — سرویس رایگان امتحان می‌شود")
+        for model in (POLLINATIONS_MODEL, "openai"):
+            if self.stop_flag.is_set():
+                return None
+            try:
+                body = {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "model": model,
+                    "referrer": APP_NAME,
+                    "seed": random.randint(1, 10 ** 6),
+                }
+                if model == POLLINATIONS_MODEL:
+                    body["reasoning_effort"] = "low"   # مدل‌های استدلالی بدون این، token-limit می‌خورند
+                r = SESSION.post(POLLINATIONS_URL, json=body,
+                                 headers={"Content-Type": "application/json"}, timeout=(10, timeout))
+                if r.status_code < 400 and r.text.strip():
+                    self.log(f"🤖 پاسخ از هوش مصنوعی رایگان گرفته شد (مدل: {model})")
+                    return r.text
+                # خطاهای رایج: ۴۰۲ محدودیتِ رایگان (۱ پاسخ / ۴۵ ثانیه)، ۴۰۰ token-limit
+                msg = ""
+                try:
+                    msg = r.json().get("error", {}).get("message", "") or r.text[:120]
+                except Exception:
+                    msg = r.text[:120]
+                self.log(f"✗ هوش مصنوعی رایگان ({model}) خطا {r.status_code}: {msg}")
+            except Exception:
+                continue
+        return None
+
+    def ai_rescue(self, diag: dict, existing_keys: set | None = None) -> list:
+        """وضعیت را به هوش مصنوعی می‌دهد، کانفیگ‌های تازه (و لینک‌های اشتراکش) را
+        استخراج و parse می‌کند. خروجی: نودهای تازه با extra["ai"]=True (موقت — کش نمی‌شوند)."""
+        settings = load_ai_settings()
+        if settings.get("base_url"):
+            self.log("🤖 endpoint شخصیِ هوش مصنوعی پیدا شد — استفاده می‌شود")
+        existing_keys = existing_keys or set()
+        all_nodes = []
+        for rnd in range(AI_RESCUE_MAX_ROUNDS):
+            if self.stop_flag.is_set():
+                break
+            if rnd and not settings.get("base_url"):
+                # سرویس رایگان: ۱ پاسخ در ۴۵ ثانیه — قبل از دور بعد صبر
+                self.log(f"⏳ {AI_FREE_RETRY_WAIT} ثانیه صبر (محدودیتِ سرویس رایگان: ۱ پاسخ در ۴۵ ثانیه)…")
+                if self.stop_flag.wait(AI_FREE_RETRY_WAIT):
+                    break
+            prompt = build_rescue_prompt(diag, rnd)
+            self.log(f"🤖 درخواست کانفیگ تازه از هوش مصنوعی (دور {rnd + 1}/{AI_RESCUE_MAX_ROUNDS})…")
+            text = self._ai_ask(prompt, settings)
+            if self.stop_flag.is_set():
+                break
+            if not text:
+                self.log("✗ هوش مصنوعی پاسخ نداد")
+                continue
+            uris, subs = extract_uris_from_ai(text)
+            self.log(f"🤖 در پاسخ: {len(uris)} کانفیگ + {len(subs)} لینک اشتراک")
+            fresh = []
+
+            def _mark(n, name):
+                if n is None or n.key() in existing_keys:
+                    return None
+                n.extra["ai"] = True
+                if name and not str(n.name or "").startswith("🤖"):
+                    n.name = f"🤖 {name}"
+                return n
+
+            for u in uris:
+                n = parse_uri(u)
+                if _mark(n, (n.name if n else "")) is not None:
+                    fresh.append(n)
+            for su in subs:                       # لینک اشتراک در پاسخ؟ دانلود و استخراج
+                txt = self._fetch_url(su)
+                if not txt:
+                    continue
+                got = decode_subscription(txt)[:200]
+                self.log(f"🤖 لینک اشتراک: {len(got)} کانفیگ")
+                for u2 in got:
+                    n2 = parse_uri(u2)
+                    if _mark(n2, "کانفیگ تازه") is not None:
+                        fresh.append(n2)
+            fresh = filter_supported(fresh)
+            all_nodes.extend(fresh)
+            if all_nodes:
+                break                             # کافی است — تستِ واقعی خودش غربال می‌کند
+        # بدون تکرار
+        uniq, seen = [], set()
+        for n in all_nodes:
+            if n.key() in seen:
+                continue
+            seen.add(n.key())
+            uniq.append(n)
+        return uniq[:AI_RESCUE_MAX_URIS]
 
     # ---------- نگهبان اتصال: چک سبک (بدون دانلود سنگین) ----------
     def health_check(self, timeout: float = 7.0) -> bool:
