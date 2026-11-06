@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN Engine v1.7
+ManjarVPN Engine v1.8
 =====================
 مشکلِ نسخه‌ی قبل: برنامه می‌گفت «هیچ سروری کار نمی‌کند» در حالی که اکثر سرورها سالم بودند —
 خودِ «قیفِ تست» همه‌چیز را رد می‌کرد. v1.7 قیف را از پایه درست می‌کند:
@@ -22,6 +22,10 @@ ManjarVPN Engine v1.7
   ۷) «نجات با هوش مصنوعی» دیگر خودکار نیست — سوییچ در رابط (پیش‌فرض خاموش):
      مدلِ زبانی کانفیگِ زنده نمی‌شناسد و اکثراً UUID ساختگی می‌دهد؛ تصمیمِ نهایی
      را تستِ واقعی می‌گیرد، نه مدل
+
+v1.8: تونلِ نهایی حالا یک اینباندِ API آمار هم دارد (StatsService) تا مصرفِ حجمِ کاربر
+دقیق شمارش شود — read_traffic_counters() هر چند ثانیه از همین هسته می‌پرسد (بدون
+واسطِ اضافه روی مسیر ترافیک) و محاسبه‌گرِ حجمِ رابط را پر می‌کند.
 
 از v1.5 حفظ شد: سرعت شرطِ اتصال است و نودِ «فقط‌پینگی» در چهار لایه لو می‌رود:
   ۱) تست عمیق: سرعتِ «پایدار» (۳ دانلود موازی، بدون یک‌وَک اولیه) زیر حداقل → رد
@@ -56,7 +60,7 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 APP_NAME = "ManjarVPN"
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 # ============================ تنظیمات قابل تغییر ============================
 MAX_TEST_NODES = 1200         # حداکثر کانفیگ برای پیش‌فیلتر TCP
@@ -784,7 +788,10 @@ def build_outbound(node: Node):
     return None
 
 
-def build_xray_config(node: Node, socks_port: int, http_port: int | None = None):
+def build_xray_config(node: Node, socks_port: int, http_port: int | None = None,
+                      api_port: int | None = None):
+    """کانفیگ Xray. اگر api_port داده شود، سرویسِ آمار (StatsService) هم اضافه می‌شود تا
+    مصرفِ حجمِ تونلِ نهایی دقیق شمارش شود (فقط برای اتصالِ اصلی — تست‌ها سبک می‌مانند)."""
     outbound = build_outbound(node)
     if outbound is None:
         return None
@@ -795,9 +802,22 @@ def build_xray_config(node: Node, socks_port: int, http_port: int | None = None)
     if http_port:
         inbounds.append({"tag": "http-in", "listen": "127.0.0.1", "port": http_port,
                          "protocol": "http", "settings": {}, "sniffing": sniffing})
-    return {"log": {"loglevel": "warning"},
-            "inbounds": inbounds,
-            "outbounds": [outbound, {"tag": "direct", "protocol": "freedom"}]}
+    cfg = {"log": {"loglevel": "warning"},
+           "inbounds": inbounds,
+           "outbounds": [outbound, {"tag": "direct", "protocol": "freedom"}]}
+    if api_port:
+        inbounds.append({"tag": "api", "listen": "127.0.0.1", "port": api_port,
+                         "protocol": "dokodemo-door", "settings": {"address": "127.0.0.1"}})
+        cfg["stats"] = {}
+        cfg["api"] = {"tag": "api", "services": ["StatsService"]}
+        cfg["policy"] = {
+            "levels": {"0": {"statsUserUplink": True, "statsUserDownlink": True}},
+            "system": {"statsInboundUplink": True, "statsInboundDownlink": True,
+                       "statsOutboundUplink": True, "statsOutboundDownlink": True},
+        }
+        cfg["routing"] = {"rules": [{"type": "field",
+                                     "inboundTag": ["api"], "outboundTag": "api"}]}
+    return cfg
 
 
 # ============================ یافتن هسته Xray ============================
@@ -975,6 +995,7 @@ class VpnEngine:
         self._ep_cursor = 0                 # v1.7: چرخشِ اندپوینتِ سرعت بین نودها (پخشِ بار)
         self._gate_ep: str | None = None    # v1.7: اندپوینتِ سالمِ اتصالِ فعلی (کشِ دروازه/نگهبان)
         self._last_sites_detail = ""        # آخرین جزئیاتِ بازشدن سایت‌ها (برای گزارشِ دلیل رد)
+        self.api_port: int | None = None    # v1.8: پورتِ API آمار برای شمارشِ مصرفِ حجم
 
     # ---------- callbacks ----------
     def log(self, msg: str):
@@ -2014,12 +2035,43 @@ class VpnEngine:
         except Exception:
             return ""
 
+    def read_traffic_counters(self) -> int | None:
+        """v1.8 — مجموعِ بایتِ ردشده از اینباند‌های کاربر (socks + http) از API آمارِ Xray.
+        uplink + downlink؛ اینباندِ api خودش شمرده نمی‌شود. خروجیِ None یعنی خواندن ممکن نشد.
+        سبک است (یک subprocess چند-millisecond) — رابط هر چند ثانیه می‌پرسد."""
+        if not self.api_port or not self.xray_path:
+            return None
+        if not self.proc or self.proc.poll() is not None:
+            return None
+        try:
+            p = subprocess.run(
+                [self.xray_path, "api", "statsquery",
+                 f"--server=127.0.0.1:{self.api_port}", "-pattern", "inbound"],
+                capture_output=True, text=True, timeout=6,
+                creationflags=CREATE_NO_WINDOW)
+            if p.returncode != 0:
+                return None
+            d = json.loads(p.stdout or "{}")
+            total = 0
+            for s in d.get("stat", []):
+                name = str(s.get("name", ""))
+                if ">>>api>>>" in name:       # ترافیکِ خودِ API شمرده نشود
+                    continue
+                try:
+                    total += int(s.get("value", 0))
+                except (TypeError, ValueError):
+                    pass
+            return total
+        except Exception:
+            return None
+
     def connect(self, node: Node) -> bool:
         self.disconnect(restore_proxy=False)
         # پورت‌های آزاد (اگر v2rayN و … روی 10808 بود، تداخل پیش نیاید)
         self.socks_port = self._alloc_local_port(10808)
         self.http_port = self._alloc_local_port(10809)
-        cfg = build_xray_config(node, self.socks_port, self.http_port)
+        self.api_port = self._alloc_local_port(15432)     # v1.8: API آمار
+        cfg = build_xray_config(node, self.socks_port, self.http_port, api_port=self.api_port)
         if cfg is None:
             raise RuntimeError("ساخت کانفیگ برای این نود ممکن نشد")
         tmp = os.path.join(tempfile.gettempdir(), "manjarvpn_main.json")
@@ -2084,6 +2136,7 @@ class VpnEngine:
         if restore_proxy:
             set_system_proxy(False)
         self.current_node = None
+        self.api_port = None
 
     def stop_all(self):
         self.stop_flag.set()

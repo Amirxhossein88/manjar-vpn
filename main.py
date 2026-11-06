@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-ManjarVPN v1.7 — رابط گرافیکی
-اسپلش انیمیشنی • کارت وضعیت • کارت سرور (متن وسط‌چین) • کارت‌های آمار
-دکمه گرادیانی سفارشی (متن همیشه نمایان) • نگهبان سبک + تعمیر بی‌صدا
-پنل «سرورهای تست‌شده» داخل پنجره‌ی اصلی + دکمه‌ی بستن مشخص (✕) و کلید Escape
-خروج بدون خطا با دکمه‌ی ضربدر — حتی وقتی پروسه‌های تست در جریان‌اند
-جریان اتصال: پینگ (با تلاشِ مجدد) ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ←
-سرعتِ پایدار دانلود/آپلود (۴ اندپوینتِ مستقل) ← بهترین — و حالتِ اضطراری:
-اگر هیچ کاندیدی سرعتِ تأییدشده نداشت، به کم‌پینگ‌ترینِ سالم‌ها وصل می‌شود
-(دیگر پیامِ بن‌بستِ «هیچ‌کدام کار نمی‌کند» وجود ندارد) + گزارشِ قیفِ تست با دلیلِ رد
+ManjarVPN v1.8 — رابط گرافیکی
+اسپلش ۷ ثانیه‌ای • پنجره و همه‌ی پنجره‌ها دقیقا وسطِ مانیتور • نوتیفِ راهنمای اتصال هنگام باز شدن
+گردونه‌ی هدیه‌ی خوش‌آمدگویی (فقط یک‌بار برای هر سیستم، ۵۰۰ تا ۶۰۰ مگ) • محاسبه‌گرِ مصرفِ حجم
+کدهای شارژ: کدِ خریدار ۷ گیگ / کدِ مدیر ۲۰ گیگ • قطعِ سرویس هنگام اتمامِ اعتبار
+منوی همبرگری: فیلترشکن (VPN) • Game Booster (به‌زودی) • App Booster (به‌زودی) • راهنما
+دکمه گرادیانی سفارشی • نگهبان سبک + تعمیر بی‌صدا • پنل سرورهای تست‌شده + گزارش اتصال
+جریان اتصال: پینگ ← باز کردن واقعی یوتوب/اینستاگرام/تلگرام ← سرعتِ پایدار دانلود/آپلود ← بهترین
 سوییچِ «نجات با هوش مصنوعی» (پیش‌فرض خاموش، ماندگار در prefs.json)
 """
 from __future__ import annotations
@@ -16,6 +14,7 @@ from __future__ import annotations
 import math
 import os
 import queue
+import random
 import re
 import threading
 import time
@@ -30,6 +29,7 @@ from engine import (APP_NAME, VERSION, VpnEngine, Node, SESSION,
                     decode_subscription, filter_supported, find_logo,
                     load_my_configs, load_prefs, save_prefs,
                     parse_uri)
+from account import ACCOUNT
 
 try:
     from PIL import Image as PILImage, ImageDraw, ImageTk
@@ -96,6 +96,7 @@ class PillButton(tk.Canvas):
         "idle":      {"text": "اتصال خودکار",     "c1": (59, 130, 246),  "c2": (139, 92, 246)},
         "busy":      {"text": "لغو تست و اتصال",   "c1": (202, 110, 5),   "c2": (245, 158, 11)},
         "connected": {"text": "قطع اتصال",         "c1": (220, 38, 38),   "c2": (239, 68, 68)},
+        "blocked":   {"text": "اعتبار تمام شد — شارژ کنید", "c1": (127, 29, 29), "c2": (153, 27, 27)},
     }
     DIM = {"c1": (38, 46, 74), "c2": (48, 58, 92)}
 
@@ -117,7 +118,7 @@ class PillButton(tk.Canvas):
         self.bind("<Leave>", lambda e: self._hover_change(False))
 
     # ---------------- API ----------------
-    def set_mode(self, mode: str):
+    def set_mode(self, mode: str, text: str | None = None):
         if mode == "disabled":
             self._enabled = False
             self.configure(cursor="arrow")
@@ -125,7 +126,7 @@ class PillButton(tk.Canvas):
             self._enabled = True
             self.configure(cursor="hand2")
             if mode in self.MODES:
-                self._text = self.MODES[mode]["text"]
+                self._text = text or self.MODES[mode]["text"]
                 self._mode = mode
         self._bucket = None
         self._render(force=True)
@@ -135,7 +136,7 @@ class PillButton(tk.Canvas):
 
     def tick(self, t: float):
         """انیمیشن نفس‌کشیدن — فقط وقتی پله‌ی روشنایی عوض شود رندر می‌کند."""
-        if not self._enabled:
+        if not self._enabled or self._mode == "blocked":
             return
         period = 1.6 if self._mode == "idle" else 2.4
         f = 0.5 - 0.5 * math.cos((t % period) / period * 2 * math.pi)
@@ -236,7 +237,12 @@ class PillButton(tk.Canvas):
         return items
 
 
-# ============================ اسپلش ============================
+# ============================ اسپلش (۷ ثانیه) ============================
+SPLASH_SECONDS = float(os.environ.get("MANJAR_SPLASH_SECONDS", "7"))
+SPLASH_MSGS = ("در حال آماده‌سازی…", "بارگذاری منابع کانفیگ…",
+               "چک کردن هسته Xray…", "کمی صبر — نزدیک آماده‌شدن…")
+
+
 class Splash(ctk.CTkToplevel):
     def __init__(self, master, warmup, on_done):
         super().__init__(master, fg_color=BG)
@@ -270,9 +276,11 @@ class Splash(ctk.CTkToplevel):
         self.sweep = ctk.CTkProgressBar(self, width=240, height=6,
                                         progress_color=BLUE, fg_color="#1a2140")
         self.sweep.pack(pady=(28, 8))
-        ctk.CTkLabel(self, text="در حال آماده‌سازی…",
-                     font=ctk.CTkFont(family=FONT, size=12),
-                     text_color=TXT_DIM).pack()
+        self.msg_idx = -1
+        self.msg_lbl = ctk.CTkLabel(self, text="در حال آماده‌سازی…",
+                                    font=ctk.CTkFont(family=FONT, size=12),
+                                    text_color=TXT_DIM)
+        self.msg_lbl.pack()
         ctk.CTkLabel(self, text=f"v{VERSION}",
                      font=ctk.CTkFont(family=FONT, size=10),
                      text_color="#5d6a7e").pack(side="bottom", pady=12)
@@ -303,7 +311,15 @@ class Splash(ctk.CTkToplevel):
             b = 0.25 + 0.75 * max(0.0, math.sin(t * 4.2 - i * 0.9))
             d.configure(text_color=_blend("#243048", CYAN, b))
         self.sweep.set(0.5 - 0.5 * math.cos((t % 1.6) / 1.6 * 2 * math.pi))
-        if not self._ready and time.time() - self._t0 < 3.2:
+        # v1.8: پیام‌های چرخشی اسپلش (هر ~۱.۷۵ ثانیه)
+        idx = int(t // 1.75) % len(SPLASH_MSGS)
+        if idx != self.msg_idx:
+            self.msg_idx = idx
+            try:
+                self.msg_lbl.configure(text=SPLASH_MSGS[idx])
+            except Exception:
+                pass
+        if not self._ready and time.time() - self._t0 < SPLASH_SECONDS:
             self.after(45, self._tick)
         else:
             self._finish()
@@ -332,13 +348,173 @@ class Splash(ctk.CTkToplevel):
             pass
 
 
+# ============================ گردونه‌ی هدیه (v1.8) ============================
+WHEEL_SEGMENTS = [
+    ("500MB", 500, "#3b82f6"),
+    ("510MB", 510, "#8b5cf6"),
+    ("525MB", 525, "#22c55e"),
+    ("540MB", 540, "#0ea5e9"),
+    ("555MB", 555, "#f59e0b"),
+    ("570MB", 570, "#ec4899"),
+    ("585MB", 585, "#14b8a6"),
+    ("600MB", 600, "#a78bfa"),
+]
+
+
+class GiftWheel(ctk.CTkToplevel):
+    """گردونه‌ی هدیه‌ی خوش‌آمدگویی — فقط یک‌بار برای هر سیستم (در account.json ماندگار است).
+    نتیجه همیشه بین ۵۰۰ تا ۶۰۰ مگابایت است؛ اعتبارِ اولیه = جایزه‌ی گردونه."""
+
+    def __init__(self, master, on_done):
+        super().__init__(master, fg_color=BG)
+        self.on_done = on_done
+        self.title("هدیه‌ی خوش‌آمدگویی 🎁")
+        self.configure(fg_color=BG)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self._closing = False
+        w, h = 440, 640
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        self.protocol("WM_DELETE_WINDOW", self._skip)
+
+        ctk.CTkLabel(self, text="🎁",
+                     font=ctk.CTkFont(family=FONT, size=40)).pack(pady=(20, 0))
+        ctk.CTkLabel(self, text="هدیه‌ی خوش‌آمدگویی",
+                     font=ctk.CTkFont(family=FONT, size=24, weight="bold"),
+                     text_color=TXT).pack()
+        ctk.CTkLabel(self, text="بچرخان و اولین اعتبارِ حجم‌ات را رایگان بگیر!",
+                     font=ctk.CTkFont(family=FONT, size=13),
+                     text_color=TXT_DIM).pack(pady=(2, 10))
+
+        self.canvas = tk.Canvas(self, width=360, height=360, bg=BG,
+                                highlightthickness=0, bd=0)
+        self.canvas.pack(pady=(2, 6))
+        self.angle = random.uniform(0, 360)
+        self._spinning = False
+        self._draw()
+
+        self.spin_btn = ctk.CTkButton(self, text="🎡  بچرخان", command=self._spin,
+                                      height=48, width=190, corner_radius=16,
+                                      fg_color=VIOLET, hover_color="#7c3aed",
+                                      font=ctk.CTkFont(family=FONT, size=16, weight="bold"))
+        self.spin_btn.pack(pady=(4, 6))
+        self.result_lbl = ctk.CTkLabel(self, text="",
+                                       font=ctk.CTkFont(family=FONT, size=15, weight="bold"),
+                                       text_color=GREEN, wraplength=390, justify="center")
+        self.result_lbl.pack(pady=(2, 2))
+        ctk.CTkLabel(self, text="گردونه فقط یک‌بار برای هر سیستم نمایش داده می‌شود",
+                     font=ctk.CTkFont(family=FONT, size=10),
+                     text_color="#5d6a7e").pack(side="bottom", pady=(2, 12))
+        self.after(250, self._grab)
+
+    def _grab(self):
+        try:
+            self.grab_set()
+            self.focus_force()
+        except Exception:
+            pass
+
+    # ---------- رسم ----------
+    def _draw(self):
+        c = self.canvas
+        c.delete("all")
+        cx, cy, r = 180, 186, 150
+        n = len(WHEEL_SEGMENTS)
+        seg = 360.0 / n
+        for i, (label, _mb, color) in enumerate(WHEEL_SEGMENTS):
+            start = (self.angle + i * seg) % 360
+            c.create_arc(cx - r, cy - r, cx + r, cy + r, start=start, extent=seg,
+                         style="pieslice", fill=color, outline=BG, width=2)
+            mid = math.radians(self.angle + i * seg + seg / 2)
+            tx = cx + math.cos(mid) * r * 0.66
+            ty = cy - math.sin(mid) * r * 0.66
+            c.create_text(tx, ty, text=label, fill="#ffffff",
+                          font=(FONT, 11, "bold"))
+        c.create_oval(cx - 42, cy - 42, cx + 42, cy + 42,
+                      fill="#0f1430", outline=BORDER, width=3)
+        c.create_text(cx, cy, text="🎁", font=(FONT, 26))
+        # نشانگر بالا
+        c.create_polygon(cx - 15, cy - r - 13, cx + 15, cy - r - 13, cx, cy - r + 13,
+                         fill="#ffffff", outline="#0c1022", width=2)
+
+    # ---------- چرخش ----------
+    def _spin(self):
+        if self._spinning:
+            return
+        self._spinning = True
+        self.spin_btn.configure(state="disabled", text="در حال چرخش…")
+        self.result_lbl.configure(text="", text_color=TXT_DIM)
+        target = random.randrange(len(WHEEL_SEGMENTS))       # همه‌ی بخش‌ها = ۵۰۰ تا ۶۰۰ مگ
+        n = len(WHEEL_SEGMENTS)
+        seg = 360.0 / n
+        # نشانگرِ بالا (۹۰°) باید روی وسطِ بخشِ هدف بایستد (+ لرزشِ کوچک)
+        jitter = random.uniform(-seg * 0.32, seg * 0.32)
+        final = (90 - (target * seg + seg / 2) + jitter) % 360
+        delta = (final - self.angle) % 360 + 360 * 6         # ۶ دور کامل + فاصله تا مقصد
+        self._a0 = self.angle % 360
+        self._animate(time.time(), 4.4, delta,
+                      lambda: self._landed(target))
+
+    def _animate(self, t0, dur, delta, done):
+        t = (time.time() - t0) / dur
+        if self._closing or t >= 1.0:
+            done()
+            return
+        ease = 1.0 - (1.0 - t) ** 3                          # شتابِ اول، آرامِ آخر
+        self.angle = (self._a0 + delta * ease) % 360
+        self._draw()
+        self.after(16, lambda: self._animate(t0, dur, delta, done))
+
+    def _landed(self, target):
+        self.angle = self.angle % 360
+        self._draw()
+        prize = WHEEL_SEGMENTS[target][1]
+        self.result_lbl.configure(
+            text=f"🎉 تبریک! {prize} مگابایت اعتبارِ رایگان فعال شد",
+            text_color=GREEN)
+        self.spin_btn.configure(text="شروع استفاده", state="normal",
+                                fg_color=GREEN, hover_color=GREEN_DIM,
+                                command=self._claim)
+        self._prize = prize
+        self._spinning = False
+
+    def _claim(self):
+        prize = getattr(self, "_prize", 0.0)
+        ACCOUNT.add_credit(prize, source="wheel", replace=True)
+        ACCOUNT.set_wheel_done(prize)
+        self._close(True)
+
+    def _skip(self):
+        """بستن بدون چرخاندن — گردونه دیگر نمی‌آید؛ اعتبارِ پیش‌فرض ۵۰۰ مگ می‌ماند."""
+        ACCOUNT.set_wheel_done(0.0)
+        self._close(False)
+
+    def _close(self, claimed: bool):
+        if self._closing:
+            return
+        self._closing = True
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        try:
+            self.on_done(claimed)
+        except Exception:
+            pass
+
+
 # ============================ پنجره اصلی ============================
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} v{VERSION}")
-        self.geometry("720x560")
-        self.minsize(640, 540)
+        self.geometry("720x690")
+        self.minsize(640, 660)
         self.configure(fg_color=BG)
         try:
             ico = find_logo()
@@ -362,6 +538,10 @@ class App(ctk.CTk):
         self._tick_i = 0
         self._report_open = False
         self._servers_open = False
+        self._drawer_open = False        # v1.8: منوی همبرگری
+        self._page = None                # v1.8: صفحه‌ی فعال (روی داشبورد)
+        self._toast_after = None         # v1.8: زمان‌سنجِ نوتیف
+        self._wheel_win = None           # v1.8: پنجره‌ی گردونه
         self._shutdown_thread: threading.Thread | None = None
         self._conn_lock = threading.Lock()       # فقط یک جریان اتصال در هر لحظه
         self._abort_repair = threading.Event()   # قطع دستی → تعمیر خودکار لغو شود
@@ -370,29 +550,44 @@ class App(ctk.CTk):
         self._build_ui()
         # دکمه‌ی ضربدر باید از همان اول کار کند (حتی وسط اسپلش)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._center_on_screen()          # v1.8: دقیقا وسطِ مانیتور
 
     # ---------------- UI ----------------
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(9, weight=1)
+        self.grid_rowconfigure(10, weight=1)
 
-        # هدر
+        # هدر + دکمه‌ی منوی همبرگری (v1.8)
         head = ctk.CTkFrame(self, fg_color="transparent")
-        head.grid(row=0, column=0, pady=(16, 0))
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 0))
+        head.grid_columnconfigure(0, weight=0)
+        head.grid_columnconfigure(1, weight=1)
+        head.grid_columnconfigure(2, weight=0)
+        self.menu_btn = ctk.CTkButton(head, text="☰", width=42, height=40,
+                                      corner_radius=12, fg_color=CARD, hover_color=CARD_H,
+                                      text_color=TXT,
+                                      font=ctk.CTkFont(family=FONT, size=18, weight="bold"),
+                                      command=self._toggle_drawer)
+        self.menu_btn.grid(row=0, column=0, sticky="w")
+        mid = ctk.CTkFrame(head, fg_color="transparent")
+        mid.grid(row=0, column=1)
         self.logo_small = _load_logo(52)
-        ctk.CTkLabel(head, text="" if self.logo_small else "🛡",
+        ctk.CTkLabel(mid, text="" if self.logo_small else "🛡",
                      image=self.logo_small).pack(side="left", padx=(0, 10))
-        ctk.CTkLabel(head, text="ManjarVPN",
+        ctk.CTkLabel(mid, text="ManjarVPN",
                      font=ctk.CTkFont(family=FONT, size=28, weight="bold"),
                      text_color=TXT).pack(side="left")
+        ctk.CTkLabel(head, text=f"v{VERSION}",
+                     font=ctk.CTkFont(family=FONT, size=11),
+                     text_color=TXT_DIM).grid(row=0, column=2, sticky="e")
         ctk.CTkLabel(self, text="────────  اتصال امن، ساده و سریع  ────────",
                      font=ctk.CTkFont(family=FONT, size=12),
-                     text_color=TXT_DIM).grid(row=1, column=0, pady=(2, 12))
+                     text_color=TXT_DIM).grid(row=1, column=0, pady=(2, 8))
 
         # کارت وضعیت
         st = ctk.CTkFrame(self, fg_color=CARD, corner_radius=18,
                           border_width=1, border_color="#1f7a6a")
-        st.grid(row=2, column=0, padx=20, pady=(2, 10), sticky="ew")
+        st.grid(row=2, column=0, padx=20, pady=(2, 8), sticky="ew")
         st.grid_columnconfigure(0, weight=1)
         inner = ctk.CTkFrame(st, fg_color="transparent")
         inner.grid(row=0, column=0, pady=14)
@@ -410,7 +605,7 @@ class App(ctk.CTk):
         # کارت سرور (قابل کلیک) — متن وسط‌چین (رفع باگ چپ‌چین بودن)
         self.server_card = ctk.CTkFrame(self, fg_color=CARD, corner_radius=18,
                                         border_width=1, border_color=BORDER, cursor="hand2")
-        self.server_card.grid(row=3, column=0, padx=20, pady=(0, 10), sticky="ew")
+        self.server_card.grid(row=3, column=0, padx=20, pady=(0, 8), sticky="ew")
         self.server_card.grid_columnconfigure(0, weight=0)
         self.server_card.grid_columnconfigure(1, weight=1)   # ستون متن → کل عرض بین پرچم و شفرون
         self.server_card.grid_columnconfigure(2, weight=0)
@@ -438,25 +633,31 @@ class App(ctk.CTk):
 
         # کارت‌های آمار
         stats = ctk.CTkFrame(self, fg_color="transparent")
-        stats.grid(row=4, column=0, padx=20, pady=(0, 10), sticky="ew")
+        stats.grid(row=4, column=0, padx=20, pady=(0, 8), sticky="ew")
         stats.grid_columnconfigure((0, 1, 2), weight=1, uniform="st")
         self.stat_ping = self._stat_card(stats, 0, "پینگ", "−", "#a78bfa")
         self.stat_dl = self._stat_card(stats, 1, "سرعت دانلود", "− Mbps", "#60a5fa")
         self.stat_ul = self._stat_card(stats, 2, "سرعت آپلود", "− Mbps", "#f472b6")
 
-        # نوار پیشرفت
-        self.bar = ctk.CTkProgressBar(self, progress_color=BLUE, height=8,
+        # نوار پیشرفت + متنِ مرحله — داخل یک فریم (رفعِ باگِ هم‌سلولیِ گرید که نوار را
+        # نامرئی می‌کرد: هر دو در row=5 بودند و دومی جای اولی را می‌گرفت)
+        pf = ctk.CTkFrame(self, fg_color="transparent")
+        pf.grid(row=5, column=0, padx=20, pady=(0, 2), sticky="ew")
+        self.bar = ctk.CTkProgressBar(pf, progress_color=BLUE, height=8,
                                       fg_color="#1a2140", corner_radius=4)
-        self.bar.grid(row=5, column=0, padx=20, pady=(2, 0), sticky="ew")
+        self.bar.pack(fill="x")
         self.bar.set(0)
-        self.phase_lbl = ctk.CTkLabel(self, text="", font=ctk.CTkFont(family=FONT, size=11),
+        self.phase_lbl = ctk.CTkLabel(pf, text="", font=ctk.CTkFont(family=FONT, size=11),
                                       text_color=TXT_DIM)
-        self.phase_lbl.grid(row=5, column=0, pady=(12, 0))
+        self.phase_lbl.pack(pady=(3, 0))
+
+        # کارت مصرف حجم (محاسبه‌گر) — v1.8
+        self._build_quota_card()          # row=6
 
         # نشان پروکسی سیستم
         pill = ctk.CTkFrame(self, fg_color=CARD, corner_radius=16,
                             border_width=1, border_color=BORDER)
-        pill.grid(row=6, column=0, padx=20, pady=(10, 10), sticky="ew")
+        pill.grid(row=7, column=0, padx=20, pady=(2, 8), sticky="ew")
         self.pill_lbl = ctk.CTkLabel(pill, text="○  پروکسی سیستم خاموش",
                                      font=ctk.CTkFont(family=FONT, size=13),
                                      text_color=TXT_DIM)
@@ -466,11 +667,11 @@ class App(ctk.CTk):
 
         # دکمه اصلی — سفارشی (متن همیشه نمایان)
         self.btn = PillButton(self, on_click=self._on_button, height=62)
-        self.btn.grid(row=7, column=0, padx=20, pady=(4, 6), sticky="ew")
+        self.btn.grid(row=8, column=0, padx=20, pady=(2, 6), sticky="ew")
 
         # لینک‌های پایین
         links = ctk.CTkFrame(self, fg_color="transparent")
-        links.grid(row=8, column=0, pady=(2, 4))
+        links.grid(row=9, column=0, pady=(2, 4))
         self.report_btn = ctk.CTkButton(links, text="📄  نمایش گزارش اتصال",
                                         command=self._toggle_report, width=200, height=28,
                                         fg_color="transparent", hover_color=CARD,
@@ -494,7 +695,7 @@ class App(ctk.CTk):
         # گزارش (لاگ) — پیش‌فرض مخفی
         self.log_box = ctk.CTkTextbox(self, fg_color="#080b18", text_color="#9fb0c8",
                                       font=ctk.CTkFont(family=FONT, size=12), wrap="word")
-        self.log_box.grid(row=9, column=0, padx=20, pady=(2, 14), sticky="nsew")
+        self.log_box.grid(row=10, column=0, padx=20, pady=(2, 14), sticky="nsew")
         self.log_box.grid_remove()
         self._log(f"{APP_NAME} v{VERSION} آماده است.")
 
@@ -503,7 +704,7 @@ class App(ctk.CTk):
         # دکمه‌ی بستن مشخص (✕) + کلید Escape هم دارد.
         self.servers_panel = ctk.CTkFrame(self, fg_color="#0f1430", corner_radius=14,
                                           border_width=1, border_color=BORDER)
-        self.servers_panel.grid(row=9, column=0, padx=20, pady=(2, 14), sticky="nsew")
+        self.servers_panel.grid(row=10, column=0, padx=20, pady=(2, 14), sticky="nsew")
         self.servers_panel.grid_remove()
         phead = ctk.CTkFrame(self.servers_panel, fg_color="transparent")
         phead.pack(fill="x", padx=12, pady=(10, 4))
@@ -540,7 +741,12 @@ class App(ctk.CTk):
                 except Exception:
                     pass
         self.bind_all("<MouseWheel>", _wheel, add="+")
-        self.bind("<Escape>", lambda e: self._servers_open and self._toggle_servers())
+        self.bind("<Escape>", self._on_escape)
+
+        # v1.8 — منوی همبرگری، صفحه‌ها و نوتیف (آخر ساخته می‌شوند تا روی همه باشند)
+        self._build_drawer()
+        self._build_pages()
+        self._build_toast()
 
     def _stat_card(self, parent, col, label, value, color):
         c = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=16,
@@ -569,6 +775,437 @@ class App(ctk.CTk):
                                                     fill=GREEN, width=0))
         c.place_forget()
         return c
+
+    # ================= v1.8 — ابزارهای عمومی =================
+    @staticmethod
+    def _fmt_mb(mb: float) -> str:
+        if mb >= 1024:
+            return f"{mb / 1024:.2f} گیگ".replace(".00 گیگ", " گیگ")
+        return f"{int(round(mb))} مگ"
+
+    def _center_on_screen(self, w: int | None = None, h: int | None = None):
+        """پنجره را دقیقا وسطِ مانیتور می‌گذارد (v1.8)."""
+        try:
+            self.update_idletasks()
+            w = w or self.winfo_width()
+            h = h or self.winfo_height()
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            x = max(0, (sw - w) // 2)
+            y = max(0, (sh - h) // 2)
+            self.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+    def _apply_size(self):
+        h = 1010 if (self._servers_open or self._report_open) else 690
+        self.geometry(f"720x{h}")
+        self._center_on_screen(720, h)
+
+    def _on_escape(self, _e=None):
+        if self._drawer_open:
+            self._close_drawer()
+            return
+        if self._page:
+            self._show_page("vpn")
+            return
+        if self._servers_open:
+            self._toggle_servers()
+
+    # ================= v1.8 — کارت مصرف حجم (محاسبه‌گر) =================
+    def _build_quota_card(self):
+        c = ctk.CTkFrame(self, fg_color=CARD, corner_radius=18,
+                         border_width=1, border_color=BORDER)
+        c.grid(row=6, column=0, padx=20, pady=(2, 8), sticky="ew")
+        self.quota_card = c
+        top = ctk.CTkFrame(c, fg_color="transparent")
+        top.pack(fill="x", padx=16, pady=(10, 2))
+        ctk.CTkLabel(top, text="📦  مصرف حجم اشتراک",
+                     font=ctk.CTkFont(family=FONT, size=13, weight="bold"),
+                     text_color=TXT).pack(side="right")
+        self.quota_left_lbl = ctk.CTkLabel(top, text="",
+                                           font=ctk.CTkFont(family=FONT, size=13, weight="bold"),
+                                           text_color=GREEN)
+        self.quota_left_lbl.pack(side="left")
+        self.quota_bar = ctk.CTkProgressBar(c, height=10, corner_radius=5,
+                                            fg_color="#1a2140", progress_color=GREEN)
+        self.quota_bar.pack(fill="x", padx=16)
+        self.quota_bar.set(0)
+        bottom = ctk.CTkFrame(c, fg_color="transparent")
+        bottom.pack(fill="x", padx=16, pady=(4, 10))
+        self.quota_info_lbl = ctk.CTkLabel(bottom, text="",
+                                           font=ctk.CTkFont(family=FONT, size=11),
+                                           text_color=TXT_DIM)
+        self.quota_info_lbl.pack(side="right")
+        ctk.CTkButton(bottom, text="شارژ", width=64, height=30, corner_radius=9,
+                      fg_color=VIOLET, hover_color="#7c3aed",
+                      font=ctk.CTkFont(family=FONT, size=12, weight="bold"),
+                      command=self._on_redeem).pack(side="left", padx=(8, 0))
+        self.code_entry = ctk.CTkEntry(bottom, width=190, height=30, corner_radius=9,
+                                       placeholder_text="کد شارژ (کد خریدار)",
+                                       font=ctk.CTkFont(family=FONT, size=12),
+                                       fg_color="#0f1430", border_color=BORDER,
+                                       text_color=TXT, justify="center")
+        self.code_entry.pack(side="left")
+        self.code_entry.bind("<Return>", lambda e: self._on_redeem())
+        self._quota_msg_after = None
+        self._refresh_quota_ui()
+
+    def _on_redeem(self):
+        code = self.code_entry.get().strip()
+        ok, msg, added = ACCOUNT.redeem(code)
+        if ok:
+            self.code_entry.delete(0, "end")
+            self._log(f"✓ {msg}")
+            self._refresh_quota_ui()
+            self.quota_card.configure(border_color=GREEN)
+            self.after(2500, lambda: self._closing or self.quota_card.configure(border_color=BORDER))
+            # اگر قبلا مسدود بود، حالا دوباره می‌تواند وصل شود
+            if self.app_state == "idle" and not ACCOUNT.is_blocked():
+                self._set_button_visual("idle")
+                self._set_status("آماده اتصال", GREEN)
+        else:
+            self._log(f"✗ شارژ ناموفق: {msg}")
+        self.quota_info_lbl.configure(text=msg,
+                                      text_color=GREEN if ok else RED)
+        if self._quota_msg_after:
+            try:
+                self.after_cancel(self._quota_msg_after)
+            except Exception:
+                pass
+
+        def _restore_info():
+            if not self._closing:
+                self._refresh_quota_ui()
+
+        self._quota_msg_after = self.after(5000, _restore_info)
+
+    def _refresh_quota_ui(self):
+        self._update_quota_card(ACCOUNT.snapshot())
+
+    def _update_quota_card(self, snap: dict):
+        used, total = snap["used_mb"], snap["credit_mb"]
+        rem = snap["remaining_mb"]
+        frac = min(1.0, snap["frac"])
+        self.quota_bar.set(frac)
+        if rem <= 0:
+            color, bar = RED, RED
+            left = "اعتبار تمام شد"
+        elif frac >= 0.85:
+            color, bar = RED, RED
+            left = f"باقی‌مانده: {self._fmt_mb(rem)}"
+        elif frac >= 0.6:
+            color, bar = AMBER, AMBER
+            left = f"باقی‌مانده: {self._fmt_mb(rem)}"
+        else:
+            color, bar = GREEN, GREEN
+            left = f"باقی‌مانده: {self._fmt_mb(rem)}"
+        self.quota_left_lbl.configure(text=left, text_color=color)
+        try:
+            self.quota_bar.configure(progress_color=bar)
+        except Exception:
+            pass
+        if rem <= 0 or frac < 0.6:
+            self.quota_info_lbl.configure(
+                text=f"مصرف شده: {self._fmt_mb(used)} از {self._fmt_mb(total)}",
+                text_color=TXT_DIM)
+
+    # ================= v1.8 — مسدودسازی هنگام اتمام اعتبار =================
+    def _blocked(self) -> bool:
+        return ACCOUNT.is_blocked()
+
+    def _apply_blocked_visual(self):
+        self._set_button_visual("blocked")
+        self._set_status("اعتبار تمام شد — باید اشتراک خود را تامین کنید", RED, RED)
+        self._log("⛔ اعتبار حجم شما تمام شده است — باید اشتراک خود را تامین کنید.")
+        self._log("   کد شارژ را در کادر «کد شارژ» وارد کنید و «شارژ» را بزنید.")
+        try:
+            self.quota_card.configure(border_color=RED)
+        except Exception:
+            pass
+
+    def _guard_blocked(self) -> bool:
+        """اگر اعتبار تمام است True برمی‌گرداند و جلوی اتصال را می‌گیرد."""
+        if self._blocked():
+            self._apply_blocked_visual()
+            return True
+        return False
+
+    # ================= v1.8 — مانیتور مصرف حجم (پرس‌وجو از API آمار Xray) =================
+    def _usage_monitor(self, epoch: int):
+        eng = self.engine
+        last = None
+        first = True
+        while not self._closing:
+            if eng.conn_epoch != epoch or eng.proc is None or eng.current_node is None:
+                break
+            total = eng.read_traffic_counters()
+            if total is None:
+                if eng.proc is None or eng.conn_epoch != epoch:
+                    break
+                time.sleep(2.5)
+                continue
+            if first:
+                first = False
+                self.q.put(("usage", ACCOUNT.snapshot()))
+            elif last is not None and total >= last and total - last > 0:
+                snap = ACCOUNT.consume(total - last)
+                self.q.put(("usage", snap))
+                if ACCOUNT.remaining_bytes() <= 0:
+                    self.q.put(("quota_exhausted", None))
+                    break
+            last = total
+            time.sleep(2.5)
+
+    def _on_quota_exhausted(self):
+        if self._closing:
+            return
+        self._set_status("اعتبار تمام شد — قطع اتصال…", RED, RED)
+        threading.Thread(target=self._disconnect_flow, daemon=True).start()
+        self.after(400, self._apply_blocked_visual)
+
+    # ================= v1.8 — منوی همبرگری =================
+    def _build_drawer(self):
+        self.drawer = ctk.CTkFrame(self, width=250, fg_color="#0f1430", corner_radius=16,
+                                   border_width=1, border_color=BORDER)
+        dh = ctk.CTkFrame(self.drawer, fg_color="transparent")
+        dh.pack(fill="x", padx=12, pady=(12, 6))
+        ctk.CTkLabel(dh, text="☰ منو",
+                     font=ctk.CTkFont(family=FONT, size=17, weight="bold"),
+                     text_color=TXT).pack(side="right", padx=6)
+        ctk.CTkButton(dh, text="✕", width=30, height=30, corner_radius=9,
+                      fg_color=CARD, hover_color=CARD_H, text_color=TXT_DIM,
+                      command=self._close_drawer).pack(side="left")
+        self._drawer_items = []
+        for key, icon, label in (("vpn", "🛡", "فیلترشکن (VPN)"),
+                                 ("game", "🎮", "Game Booster"),
+                                 ("app", "🚀", "App Booster"),
+                                 ("help", "📖", "راهنما")):
+            b = ctk.CTkButton(self.drawer, text=f"{icon}  {label}", height=46,
+                              corner_radius=12, anchor="e",
+                              font=ctk.CTkFont(family=FONT, size=14),
+                              fg_color="transparent", hover_color=CARD_H,
+                              text_color=TXT,
+                              command=lambda k=key: self._select_menu(k))
+            b.pack(fill="x", padx=12, pady=4)
+            self._drawer_items.append((key, b))
+        ctk.CTkLabel(self.drawer, text=f"ManjarVPN v{VERSION}",
+                     font=ctk.CTkFont(family=FONT, size=11),
+                     text_color="#5d6a7e").pack(side="bottom", pady=10)
+
+    def _toggle_drawer(self):
+        if self._drawer_open:
+            self._close_drawer()
+        else:
+            self._open_drawer()
+
+    def _open_drawer(self):
+        if self._drawer_open or self._closing:
+            return
+        self._drawer_open = True
+        self._animate_drawer(1.14, 1.0)
+
+    def _close_drawer(self):
+        if not self._drawer_open:
+            return
+        self._drawer_open = False
+        self._animate_drawer(1.0, 1.16, hide_at_end=True)
+
+    def _animate_drawer(self, a, b, hide_at_end=False):
+        """لغزیدن کشو از لبه‌ی راست (الف: شروع، ب: پایان — نسبت به عرض پنجره)."""
+        steps = 7
+        for i in range(1, steps + 1):
+            x = a + (b - a) * (i / steps)
+
+            def go(xx=x, last=(i == steps)):
+                if self._closing:
+                    return
+                try:
+                    self.drawer.place(relx=xx, rely=0.0, y=64, anchor="ne")
+                    if last and hide_at_end:
+                        self.drawer.place_forget()
+                except Exception:
+                    pass
+            self.after(int(i * 22), go)
+
+    def _select_menu(self, key: str):
+        self._close_drawer()
+        if key == "vpn":
+            self._show_page("vpn")
+        else:
+            self._show_page(key)
+
+    # ================= v1.8 — صفحه‌ها (روی داشبورد) =================
+    def _build_pages(self):
+        self.pages = {}
+        self.pages["game"] = self._make_booster_page(
+            "game", "Game Booster", "🎮",
+            "بهینه‌سازی خودکار پینگ و اولویت شبکه برای بازی‌ها — به‌زودی به ManjarVPN اضافه می‌شود.")
+        self.pages["app"] = self._make_booster_page(
+            "app", "App Booster", "🚀",
+            "شتاب‌دهی برنامه‌ها و مدیریت هوشمند پهنای باند — به‌زودی به ManjarVPN اضافه می‌شود.")
+        self.pages["help"] = self._build_help_page()
+
+    def _make_page_frame(self, title, icon):
+        pg = ctk.CTkFrame(self, fg_color=BG)
+        top = ctk.CTkFrame(pg, fg_color="transparent")
+        top.pack(fill="x", padx=16, pady=(14, 4))
+        ctk.CTkButton(top, text="→  بازگشت", width=110, height=34, corner_radius=10,
+                      fg_color=CARD, hover_color=CARD_H, text_color=TXT,
+                      font=ctk.CTkFont(family=FONT, size=13),
+                      command=lambda: self._show_page("vpn")).pack(side="left")
+        ctk.CTkLabel(top, text=f"{icon}  {title}",
+                     font=ctk.CTkFont(family=FONT, size=20, weight="bold"),
+                     text_color=TXT).pack(side="right", padx=8)
+        return pg
+
+    def _make_booster_page(self, key, title, icon, desc):
+        pg = self._make_page_frame(title, icon)
+        box = ctk.CTkFrame(pg, fg_color="transparent")
+        box.pack(expand=True)
+        ctk.CTkLabel(box, text=icon, font=ctk.CTkFont(family=FONT, size=64)).pack(pady=(0, 6))
+        badge = ctk.CTkLabel(box, text="  به‌زودی  ", corner_radius=14,
+                             fg_color="#312e81", text_color="#c7d2fe",
+                             font=ctk.CTkFont(family=FONT, size=14, weight="bold"))
+        badge.pack(pady=(0, 12))
+        ctk.CTkLabel(box, text=desc, wraplength=460, justify="center",
+                     font=ctk.CTkFont(family=FONT, size=13),
+                     text_color=TXT_DIM).pack(padx=30)
+        return pg
+
+    def _build_help_page(self):
+        pg = self._make_page_frame("راهنما", "📖")
+        wrap = tk.Frame(pg, bg=BG, highlightthickness=0)
+        wrap.pack(fill="both", expand=True, padx=16, pady=(4, 14))
+        canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0, bd=0)
+        sb = tk.Scrollbar(wrap, orient="vertical", command=canvas.yview,
+                          troughcolor=BG, background=CARD_H, width=12)
+        inner = ctk.CTkFrame(canvas, fg_color=BG)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="left", fill="y")
+        canvas.pack(side="right", fill="both", expand=True)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        # توجه: عرض از رویدادِ Configure «کانواس» می‌آید نه فریم داخلی — وگرنه
+        # حلقه‌ی پس‌خور عرض را جمع می‌کند (همان الگوی پنل سرورها)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+
+        def wheel(e):
+            try:
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+            except Exception:
+                pass
+        canvas.bind("<MouseWheel>", wheel)
+        inner.bind("<MouseWheel>", wheel)
+
+        sections = [
+            ("🚀 شروع سریع", [
+                "دکمه‌ی «اتصال خودکار» را بزنید؛ برنامه خودش بهترین سرور را پیدا و وصل می‌کند (حدود ۱ تا ۳ دقیقه).",
+                "همه‌چیز خودکار است — لازم نیست چیزی تنظیم کنید.",
+            ]),
+            ("🔄 اگر وصل شد ولی کار نمی‌کرد", [
+                "یک بار «قطع اتصال» بزنید و دوباره «اتصال خودکار».",
+                "همین! در اکثر موارد مشکل همین‌طوری حل می‌شود.",
+            ]),
+            ("🤖 اگر اصلا وصل نشد", [
+                "سوییچِ «🤖 نجات با AI» پایینِ صفحه را روشن کنید و دوباره تلاش کنید.",
+                "این حالت کانفیگ‌های تازه می‌گیرد و همه را کامل تست می‌کند.",
+            ]),
+            ("📦 مصرف حجم و کد شارژ", [
+                "کارتِ «مصرف حجم اشتراک» نشان می‌دهد چقدر از اعتبار‌تان مصرف شده است.",
+                "اعتبار پیش‌فرض ۵۰۰ مگابایت است + جایزه‌ی گردونه‌ی خوش‌آمدگویی (فقط بار اول).",
+                "کد شارژ را در کادرِ پایینِ همان کارت بنویسید و «شارژ» را بزنید:",
+                "کد خریدار = ۷ گیگابایت   •   کد مدیر = ۲۰ گیگابایت (هر بار که اشتراک تمام شد قابل استفاده است)",
+                "اگر اعتبار تمام شود، برنامه وصل نمی‌شود و پیام «باید اشتراک خود را تامین کنید» می‌دهد؛",
+                "کافی است کد شارژ را وارد کنید تا دوباره فعال شود.",
+            ]),
+            ("🌐 نکته‌ی پروکسی", [
+                "مرورگر و اکثر برنامه‌ها خودکار از تونل رد می‌شوند.",
+                "برنامه‌هایی که پروکسی سیستم را نادیده می‌گیرند (مثل تلگرام دسکتاپ) را دستی روی",
+                "SOCKS5 با آدرس 127.0.0.1 و پورت 10808 تنظیم کنید.",
+            ]),
+            ("❓ سوال‌های پرتکرار", [
+                "لودینگ اولِ برنامه ۷ ثانیه طول می‌کشد — طبیعی است؛ در همین مدت هسته آماده می‌شود.",
+                "گردونه‌ی هدیه فقط یک‌بار برای هر سیستم می‌آید و دیگر تکرار نمی‌شود.",
+                "برنامه وسط کار خودش را زیر نظر دارد؛ اگر اتصال خراب شود خودش تعمیرش می‌کند.",
+                "بستن برنامه با ضربدر، پروکسی سیستم را هم همیشه خاموش می‌کند.",
+            ]),
+        ]
+        for title, lines in sections:
+            ctk.CTkLabel(inner, text=title, anchor="e", justify="right",
+                         font=ctk.CTkFont(family=FONT, size=15, weight="bold"),
+                         text_color=CYAN).pack(fill="x", padx=8, pady=(14, 2))
+            for ln in lines:
+                ctk.CTkLabel(inner, text="•  " + ln, anchor="e", justify="right",
+                             wraplength=560,
+                             font=ctk.CTkFont(family=FONT, size=12),
+                             text_color=TXT).pack(fill="x", padx=12, pady=1)
+        return pg
+
+    def _show_page(self, key: str):
+        if self._closing:
+            return
+        if key == "vpn" or key not in self.pages:
+            for k, pg in self.pages.items():
+                pg.place_forget()
+            self._page = None
+            return
+        for k, pg in self.pages.items():
+            if k != key:
+                pg.place_forget()
+        self._page = key
+        self.pages[key].place(x=0, y=0, relwidth=1, relheight=1)
+
+    # ================= v1.8 — نوتیفِ راهنمای اتصال =================
+    def _build_toast(self):
+        self.toast = ctk.CTkFrame(self, width=620, fg_color="#101a38", corner_radius=16,
+                                  border_width=1, border_color="#2b3a6b")
+        ctk.CTkLabel(self.toast, text="💡 راهنمای سریع اتصال", anchor="e", justify="right",
+                     font=ctk.CTkFont(family=FONT, size=14, weight="bold"),
+                     text_color=CYAN).pack(fill="x", padx=(30, 14), pady=(10, 2))
+        ctk.CTkLabel(self.toast, justify="right", anchor="e",
+                     text=("وصل شد ولی سایت‌ها باز نشد؟  یک بار «قطع اتصال» و دوباره «اتصال خودکار» بزنید.\n"
+                           "وصل نشد؟  سوییچ «🤖 نجات با AI» پایین صفحه را روشن کنید تا کانفیگ تازه بیاید."),
+                     wraplength=540,
+                     font=ctk.CTkFont(family=FONT, size=12),
+                     text_color=TXT).pack(fill="x", padx=(30, 14), pady=(0, 10))
+        ctk.CTkButton(self.toast, text="✕", width=26, height=26, corner_radius=8,
+                      fg_color="transparent", hover_color=CARD_H, text_color=TXT_DIM,
+                      command=self._hide_toast).place(relx=1.0, x=-8, y=8, anchor="ne")
+
+    def _show_toast(self):
+        if self._closing or self._toast_after:
+            return
+        self.toast.place(relx=0.5, rely=0.008, anchor="n")
+        self._toast_after = self.after(15000, self._hide_toast)
+
+    def _hide_toast(self):
+        try:
+            self.toast.place_forget()
+        except Exception:
+            pass
+        if self._toast_after:
+            try:
+                self.after_cancel(self._toast_after)
+            except Exception:
+                pass
+            self._toast_after = None
+
+    # ================= v1.8 — گردونه‌ی هدیه =================
+    def _show_wheel(self):
+        if self._closing or self._wheel_win is not None:
+            return
+        if ACCOUNT.wheel_done:            # فقط یک‌بار برای هر سیستم
+            return
+        self._wheel_win = GiftWheel(self, on_done=self._wheel_finished)
+
+    def _wheel_finished(self, claimed: bool):
+        self._wheel_win = None
+        self._refresh_quota_ui()
+        if claimed:
+            self._log("🎁 جایزه‌ی گردونه فعال شد — اعتبار اولیه شارژ شد.")
+        else:
+            self._log("ℹ گردونه رد شد — اعتبار پیش‌فرض ۵۰۰ مگابایت فعال است.")
 
     # ---------------- helpers ----------------
     def _log(self, msg: str):
@@ -616,6 +1253,8 @@ class App(ctk.CTk):
 
     # ---------------- دکمه ----------------
     def _on_button(self):
+        if self._guard_blocked():
+            return
         if self.app_state == "idle":
             if not self.btn.is_enabled():
                 return
@@ -976,6 +1615,8 @@ class App(ctk.CTk):
         self._log(f"✓ اتصال دوباره برقرار شد: {node.display()}")
         threading.Thread(target=self._live_monitor,
                          args=(self.engine.conn_epoch,), daemon=True).start()
+        threading.Thread(target=self._usage_monitor,
+                         args=(self.engine.conn_epoch,), daemon=True).start()   # v1.8: شمارشِ حجم
 
     def _on_autofail(self):
         if self._closing:
@@ -1029,6 +1670,10 @@ class App(ctk.CTk):
                     self._set_idle()
                 elif kind == "idle":
                     self._set_idle()
+                elif kind == "usage":              # v1.8: به‌روزرسانی محاسبه‌گر حجم
+                    self._update_quota_card(payload)
+                elif kind == "quota_exhausted":    # v1.8: اعتبار تمام شد
+                    self._on_quota_exhausted()
         except queue.Empty:
             pass
         self.after(80, self._poll)
@@ -1077,6 +1722,8 @@ class App(ctk.CTk):
                   f"127.0.0.1:{self.engine.socks_port} (SOCKS5) تنظیم شوند.")
         threading.Thread(target=self._live_monitor,
                          args=(self.engine.conn_epoch,), daemon=True).start()
+        threading.Thread(target=self._usage_monitor,
+                         args=(self.engine.conn_epoch,), daemon=True).start()   # v1.8: شمارشِ حجم
 
     def _set_idle(self):
         self.app_state = "idle"
@@ -1089,6 +1736,8 @@ class App(ctk.CTk):
         if not self.engine.current_node:
             self._bar_target = 0.0
             self.phase_lbl.configure(text="")
+        if self._blocked():                        # v1.8: اعتبار تمام — مسدود بماند
+            self._apply_blocked_visual()
 
     # ---------------- پنل سرورهای تست‌شده (داخل پنجره اصلی) ----------------
     def _toggle_servers(self):
@@ -1103,7 +1752,7 @@ class App(ctk.CTk):
             self.servers_panel.grid()
         else:
             self.servers_panel.grid_remove()
-        self.geometry("720x860" if (self._servers_open or self._report_open) else "720x560")
+        self._apply_size()
 
     def _render_servers(self):
         """لیست سرورها هر بار تازه ساخته می‌شود — حتی وسط تست (نتایج زنده پر می‌شوند)."""
@@ -1140,6 +1789,8 @@ class App(ctk.CTk):
     def _pick_server(self, node: Node):
         if self.app_state == "busy":
             return
+        if self._guard_blocked():
+            return
         if self._servers_open:
             self._toggle_servers()
         self.engine.stop_flag.clear()
@@ -1156,6 +1807,16 @@ class App(ctk.CTk):
         dlg.title("کانفیگ دستی")
         dlg.geometry("560x460")
         dlg.attributes("-topmost", True)
+        dlg.transient(self)
+        # v1.8: وسطِ پنجره‌ی اصلی + مودال
+        try:
+            self.update_idletasks()
+            px, py = self.winfo_rootx(), self.winfo_rooty()
+            pw, ph = self.winfo_width(), self.winfo_height()
+            dlg.geometry(f"560x460+{px + (pw - 560) // 2}+{py + (ph - 460) // 2}")
+        except Exception:
+            pass
+        dlg.after(220, lambda: (dlg.grab_set(), dlg.focus_force()))
         dlg.grid_columnconfigure(0, weight=1)
         dlg.grid_rowconfigure(2, weight=1)
         ctk.CTkLabel(dlg, text="افزودن کانفیگ یا اشتراک دستی",
@@ -1176,6 +1837,9 @@ class App(ctk.CTk):
         def submit():
             text = box.get("1.0", "end").strip()
             if not text:
+                return
+            if self._guard_blocked():
+                dlg.destroy()
                 return
             dlg.destroy()
             self.engine.stop_flag.clear()
@@ -1202,7 +1866,7 @@ class App(ctk.CTk):
         else:
             self.log_box.grid_remove()
             self.report_btn.configure(text="📄  نمایش گزارش اتصال")
-        self.geometry("720x860" if (self._servers_open or self._report_open) else "720x560")
+        self._apply_size()
 
     # ---------------- حلقه انیمیشن ----------------
     def _ui_tick(self):
@@ -1260,6 +1924,8 @@ class App(ctk.CTk):
         if self._closing:
             return
         self.deiconify()
+        # v1.8: بعضی محیط‌ها بعد از deiconify موقعیت را ریست می‌کنند — دوباره وسط می‌گذاریم
+        self._center_on_screen()
         try:
             self.attributes("-alpha", 0.0)
         except Exception:
@@ -1286,6 +1952,13 @@ class App(ctk.CTk):
         else:
             self._set_status("آماده اتصال", GREEN)
             self._log("✓ هسته Xray آماده است")
+        # v1.8 — محاسبه‌گر حجم + نوتیف راهنما + گردونه‌ی هدیه (فقط بار اول)
+        self._refresh_quota_ui()
+        self.after(500, self._show_toast)
+        if not ACCOUNT.wheel_done:
+            self.after(900, self._show_wheel)
+        if self._blocked():
+            self._apply_blocked_visual()
 
     # ---------------- خروج ----------------
     def _on_close(self):
